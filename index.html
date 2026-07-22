@@ -508,13 +508,20 @@ img,video{max-width:100%;display:block}
   <div class="settings-section">
     <div class="settings-section-title">🎛 默认参数</div>
     <div class="form-group">
-      <label class="form-label">默认图片尺寸</label>
+      <label class="form-label">默认分辨率档位</label>
       <select class="form-select" id="defaultImageSize">
-        <option value="1024x1024">1024×1024 (正方形)</option>
-        <option value="1024x768">1024×768 (横版)</option>
-        <option value="768x1024">768×1024 (竖版)</option>
-        <option value="1792x1024">1792×1024 (宽屏)</option>
-        <option value="1024x1792">1024×1792 (竖长)</option>
+        <option value="1K">1K (~1024px)</option>
+        <option value="2K">2K (~2048px)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">默认画面比例</label>
+      <select class="form-select" id="defaultImageRatio">
+        <option value="1:1">1:1 (正方形)</option>
+        <option value="4:3">4:3 (横版)</option>
+        <option value="3:4">3:4 (竖版)</option>
+        <option value="16:9">16:9 (宽屏)</option>
+        <option value="9:16">9:16 (竖长)</option>
       </select>
     </div>
     <div class="form-group">
@@ -613,7 +620,7 @@ const state = {
   imageMime: null,
   imageFileName: null,
   settings: Object.assign({
-    imageSize: '1024x1024', imageQuality: 'standard', imageStyle: '', imageCount: 1,
+    imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
     videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
     imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
   }, saved.settings || {}),
@@ -722,16 +729,18 @@ async function generateImage() {
   hideResults();
 
   const s = state.settings;
+  // 文生图必须包含 model、prompt、size，使用 1K/2K 档位 + ratio
   const payload = {
     model: s.imageModel,
     prompt: state.prompt,
-    n: s.imageCount,
-    size: s.imageSize,
+    size: s.imageSize,       // "1K" or "2K"
+    ratio: s.imageRatio,     // "1:1", "4:3", "3:4", "16:9", "9:16"
   };
+  if (s.imageCount > 1) payload.n = s.imageCount;
   if (s.imageQuality && s.imageQuality !== 'standard') payload.quality = s.imageQuality;
   if (s.imageStyle) payload.style = s.imageStyle;
 
-  // Image-to-image: add extra_body
+  // 图生图: 在 extra_body.image 中传入图片数组，response_format 仅在 extra_body 内部
   if (state.mode === 'image-to-image' && state.imageBase64) {
     const dataUri = `data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`;
     payload.extra_body = { image: [dataUri], response_format: 'url' };
@@ -1012,13 +1021,19 @@ function renderSettingsGrid() {
   let html = '';
   if (isImage) {
     html += `<div class="form-group">
-      <label class="form-label">尺寸</label>
+      <label class="form-label">分辨率档位</label>
       <select class="form-select setting-field" data-key="imageSize">
-        <option value="1024x1024" ${s.imageSize==='1024x1024'?'selected':''}>1024×1024</option>
-        <option value="1024x768" ${s.imageSize==='1024x768'?'selected':''}>1024×768</option>
-        <option value="768x1024" ${s.imageSize==='768x1024'?'selected':''}>768×1024</option>
-        <option value="1792x1024" ${s.imageSize==='1792x1024'?'selected':''}>1792×1024</option>
-        <option value="1024x1792" ${s.imageSize==='1024x1792'?'selected':''}>1024×1792</option>
+        <option value="1K" ${s.imageSize==='1K'?'selected':''}>1K (~1024px)</option>
+        <option value="2K" ${s.imageSize==='2K'?'selected':''}>2K (~2048px)</option>
+      </select></div>`;
+    html += `<div class="form-group">
+      <label class="form-label">画面比例</label>
+      <select class="form-select setting-field" data-key="imageRatio">
+        <option value="1:1" ${s.imageRatio==='1:1'?'selected':''}>1:1 (正方形)</option>
+        <option value="4:3" ${s.imageRatio==='4:3'?'selected':''}>4:3 (横版)</option>
+        <option value="3:4" ${s.imageRatio==='3:4'?'selected':''}>3:4 (竖版)</option>
+        <option value="16:9" ${s.imageRatio==='16:9'?'selected':''}>16:9 (宽屏)</option>
+        <option value="9:16" ${s.imageRatio==='9:16'?'selected':''}>9:16 (竖长)</option>
       </select></div>`;
     html += `<div class="form-group">
       <label class="form-label">质量</label>
@@ -1380,6 +1395,7 @@ function renderSettingsForm() {
   $('#proxyMode').value = state.proxyMode;
   $('#customProxyUrl').value = state.customProxyUrl;
   $('#defaultImageSize').value = state.settings.imageSize;
+  $('#defaultImageRatio').value = state.settings.imageRatio || '1:1';
   $('#defaultVideoResolution').value = state.settings.videoResolution;
   $('#defaultVideoDuration').value = String(state.settings.videoDuration);
   updateStatusDot();
@@ -1442,6 +1458,7 @@ $('#customProxyUrl').onchange = () => {
 };
 
 $('#defaultImageSize').onchange = () => { state.settings.imageSize = $('#defaultImageSize').value; saveState(state); };
+$('#defaultImageRatio').onchange = () => { state.settings.imageRatio = $('#defaultImageRatio').value; saveState(state); };
 $('#defaultVideoResolution').onchange = () => { state.settings.videoResolution = $('#defaultVideoResolution').value; saveState(state); };
 $('#defaultVideoDuration').onchange = () => { state.settings.videoDuration = parseInt($('#defaultVideoDuration').value); saveState(state); };
 
@@ -1457,7 +1474,7 @@ $('#clearAll').onclick = () => {
     localStorage.clear();
     state.apiKey = '';
     state.settings = {
-      imageSize: '1024x1024', imageQuality: 'standard', imageStyle: '', imageCount: 1,
+      imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
       videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
       imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
     };
