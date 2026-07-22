@@ -774,6 +774,52 @@ async function generateImage() {
 }
 
 // ─── Video Generation ──────────────────────────────────────
+function calcNumFrames(duration, fps) {
+  // num_frames must be <= 441 and follow 8n+1 rule
+  const desired = Math.min(duration * fps, 441);
+  const n = Math.round((desired - 1) / 8);
+  return Math.min(Math.max(n * 8 + 1, 1), 441);
+}
+
+function parseVideoId(raw) {
+  // Agnes returns video_id like: video_<base64(litellm:...;video_id:REAL_ID)>
+  // We need to extract the real ID for polling
+  if (!raw || !raw.startsWith('video_')) return raw || '';
+
+  const b64 = raw.slice(6); // Remove "video_" prefix (6 chars)
+  let decoded = null;
+
+  // Try URL-safe base64 decode
+  try {
+    let fixed = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = fixed.length % 4;
+    if (pad) fixed += '='.repeat(4 - pad);
+    decoded = atob(fixed);
+  } catch(e) {}
+
+  // Try standard base64 decode
+  if (!decoded) {
+    try {
+      let fixed = b64;
+      const pad = fixed.length % 4;
+      if (pad) fixed += '='.repeat(4 - pad);
+      decoded = atob(fixed);
+    } catch(e) {}
+  }
+
+  if (decoded) {
+    // Extract video_id:REAL_ID from decoded string
+    const match = decoded.match(/video_id:([^;]+)/);
+    if (match) return match[1];
+  }
+
+  // Fallback: check if raw contains "video_id:" directly
+  const idx = raw.indexOf('video_id:');
+  if (idx >= 0) return raw.slice(idx + 9);
+
+  return raw;
+}
+
 async function createVideo() {
   if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
   if (state.mode === 'image-to-video' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
@@ -783,27 +829,41 @@ async function createVideo() {
   hideResults();
 
   const s = state.settings;
+  const numFrames = calcNumFrames(s.videoDuration, s.videoFps);
+
   const payload = {
     model: s.videoModel,
     prompt: state.prompt,
     resolution: s.videoResolution,
     duration: s.videoDuration,
     fps: s.videoFps,
+    num_frames: numFrames,
   };
   if (s.videoAudio) payload.generate_audio = true;
+
+  // 图生视频: 首帧图片用 image 字段；关键帧动画用 extra_body.image
   if (state.mode === 'image-to-video' && state.imageBase64) {
     payload.image = state.imageBase64;
   }
 
   try {
+    console.log('Creating video with num_frames:', numFrames);
     const result = await callAgnes('/videos', { method: 'POST', body: payload });
-    const taskId = result.task_id || result.id || result.video_id;
-    if (!taskId) throw new Error('无法获取任务ID');
 
-    state.activeVideoTaskId = taskId;
+    // 优先使用 video_id（新接入），解析后用于轮询
+    const rawVideoId = result.video_id || '';
+    const taskId = result.task_id || result.id || '';
+    const parsedVid = parseVideoId(rawVideoId);
+    const queryId = parsedVid || taskId;
+
+    if (!queryId) throw new Error('无法获取 video_id 或 task_id');
+
+    console.log('Video created - raw video_id:', rawVideoId, 'parsed:', parsedVid, 'task_id:', taskId, 'queryId:', queryId);
+
+    state.activeVideoTaskId = queryId;
     state.videoStartTime = Date.now();
-    showVideoProgress(taskId);
-    startPollTask(taskId);
+    showVideoProgress(queryId, numFrames);
+    startPollTask(queryId);
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
     showErrorDetail();
@@ -841,7 +901,17 @@ function startPollTask(taskId) {
     try {
       const result = await callAgnes(`/videos/${taskId}`, { method: 'GET' });
       const status = result.status || result.state;
-      if (status) $('#videoStatusText').textContent = `状态: ${status}`;
+      console.log('Poll status:', status, 'Full result keys:', Object.keys(result).join(','));
+      if (status) {
+        const statusMap = {
+          'queued': `排队中... (${elapsed}s)`,
+          'processing': `正在生成... (${elapsed}s)`,
+          'in_progress': `正在生成... (${elapsed}s)`,
+          'running': `正在生成... (${elapsed}s)`,
+          'generating': `正在生成... (${elapsed}s)`,
+        };
+        $('#videoStatusText').textContent = statusMap[status] || `状态: ${status} (${elapsed}s)`;
+      }
 
       if (['succeeded', 'success', 'completed', 'done'].includes(status)) {
         clearInterval(timer);
@@ -1121,12 +1191,13 @@ function hideErrorDetail() {
   state.lastError = null;
 }
 
-function showVideoProgress(taskId) {
+function showVideoProgress(taskId, numFrames) {
   const card = $('#videoProgressCard');
   card.classList.remove('hidden');
   $('#progressFill').style.width = '0%';
   $('#progressFill').classList.add('indeterminate');
-  $('#videoStatusText').textContent = '⏳ 任务已创建，等待处理...';
+  const nfInfo = numFrames ? ` (${numFrames}帧)` : '';
+  $('#videoStatusText').textContent = `⏳ 任务已创建${nfInfo}，等待处理...`;
   $('#videoElapsed').textContent = '0s';
   $('#btnCancelVideo').classList.remove('hidden');
   setTimeout(() => $('#progressFill').classList.remove('indeterminate'), 10000);
