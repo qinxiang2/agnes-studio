@@ -292,7 +292,8 @@ img,video{max-width:100%;display:block}
 }
 .toast.show{opacity:1}
 .toast.success{background:var(--success)}
-.toast.error{background:var(--error)}
+.toast.error{background:var(--error);padding-right:32px}
+.toast.error::after{content:' ▾';opacity:0.7;font-size:12px}
 .toast.info{background:var(--accent)}
 
 /* ═══════════════════════════════════════════ Install Banner ═══════════════════════════════════════════ */
@@ -331,6 +332,39 @@ img,video{max-width:100%;display:block}
 .hidden{display:none !important}
 .mt-8{margin-top:8px}
 .mb-8{margin-bottom:8px}
+
+/* ═══════════════════════════════════════════ Task Delete ═══════════════════════════════════════════ */
+.task-card{position:relative}
+.task-delete-btn{
+  position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:50%;
+  background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--error);
+  font-size:16px;display:flex;align-items:center;justify-content:center;
+  opacity:0.6;transition:all 0.2s;z-index:2;
+}
+.task-delete-btn:active{opacity:1;background:rgba(239,68,68,0.3);transform:scale(1.1)}
+.task-select-mode .task-card{border:2px solid transparent;cursor:pointer;transition:all 0.2s}
+.task-select-mode .task-card.selected{border-color:var(--error);background:rgba(239,68,68,0.08)}
+.task-select-mode .task-delete-btn{display:none}
+.task-select-check{display:none;position:absolute;top:10px;right:10px;width:24px;height:24px;border-radius:50%;border:2px solid var(--text-muted);z-index:2}
+.task-select-mode .task-select-check{display:flex;align-items:center;justify-content:center;font-size:14px}
+.task-card.selected .task-select-check{background:var(--error);border-color:var(--error);color:#fff}
+.task-toolbar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.task-toolbar button{font-size:13px;padding:6px 14px}
+.task-toolbar .task-count{font-size:13px;color:var(--text-muted);margin-left:auto}
+
+/* ═══════════════════════════════════════════ Error Detail Card ═══════════════════════════════════════════ */
+.error-detail-card{
+  background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);
+  border-radius:var(--radius-sm);padding:16px;margin-bottom:14px;position:relative;
+}
+.error-detail-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.error-detail-icon{font-size:20px}
+.error-detail-title{font-size:15px;font-weight:700;color:var(--error)}
+.error-detail-code{font-size:12px;padding:2px 8px;border-radius:10px;background:rgba(239,68,68,0.2);color:var(--error)}
+.error-detail-body{background:rgba(0,0,0,0.3);padding:12px;border-radius:var(--radius-xs);font-size:13px;color:var(--text-secondary);word-break:break-all;line-height:1.6;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:monospace}
+.error-detail-hint{font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.5}
+.error-detail-close{position:absolute;top:10px;right:12px;background:none;border:none;color:var(--text-muted);font-size:18px}
+
 </style>
 </head>
 <body>
@@ -393,6 +427,18 @@ img,video{max-width:100%;display:block}
   <button class="btn-generate" id="btnGenerate">
     <span class="spinner"></span><span class="btn-text">✨ 生 成</span>
   </button>
+
+  <!-- Error detail card -->
+  <div class="error-detail-card hidden" id="errorDetailCard">
+    <button class="error-detail-close" id="errorDetailClose">&times;</button>
+    <div class="error-detail-header">
+      <span class="error-detail-icon">❌</span>
+      <span class="error-detail-title" id="errorDetailTitle">生成失败</span>
+      <span class="error-detail-code hidden" id="errorDetailCode"></span>
+    </div>
+    <div class="error-detail-body" id="errorDetailBody"></div>
+    <div class="error-detail-hint" id="errorDetailHint"></div>
+  </div>
 
   <!-- Results -->
   <div class="results-section hidden" id="resultsSection">
@@ -575,6 +621,7 @@ const state = {
   customProxyUrl: saved.customProxyUrl || '',
   isGenerating: false,
   results: [],
+  lastError: null,          // {message, code, type, timestamp}
   activeVideoTimer: null,
   activeVideoTaskId: null,
   videoStartTime: null,
@@ -713,9 +760,13 @@ async function generateImage() {
       };
     });
     renderResults();
+    state.lastError = null;
+    hideErrorDetail();
     addToHistory(state.results);
   } catch(e) {
-    showToast(`生成失败: ${e.message || e}`, 'error');
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
+    showErrorDetail();
+    showToast(`生成失败`, 'error');
   } finally {
     state.isGenerating = false;
     renderGenerateBtn();
@@ -754,7 +805,9 @@ async function createVideo() {
     showVideoProgress(taskId);
     startPollTask(taskId);
   } catch(e) {
-    showToast(`创建任务失败: ${e.message || e}`, 'error');
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
+    showErrorDetail();
+    showToast(`创建任务失败`, 'error');
     state.isGenerating = false;
     renderGenerateBtn();
   }
@@ -776,6 +829,8 @@ function startPollTask(taskId) {
     if (elapsed > 600) {
       clearInterval(timer);
       state.activeVideoTimer = null;
+      state.lastError = { message: '视频生成超时（超过10分钟）。任务ID: ' + taskId + '，可稍后手动查询', code: 'TIMEOUT', type: 'video', timestamp: Date.now() };
+      showErrorDetail();
       showToast('任务超时，请稍后手动查询', 'error');
       state.isGenerating = false;
       renderGenerateBtn();
@@ -825,11 +880,14 @@ function startPollTask(taskId) {
         clearInterval(timer);
         state.activeVideoTimer = null;
         const err = result.error || result.message || status;
-        $('#videoStatusText').textContent = `❌ 失败: ${err}`;
-        showToast(`任务失败: ${err}`, 'error');
+        const errMsg = typeof err === 'object' ? JSON.stringify(err) : String(err);
+        $('#videoStatusText').textContent = `❌ 失败: ${errMsg}`;
+        state.lastError = { message: errMsg, code: status, type: 'video', timestamp: Date.now(), taskId };
+        showErrorDetail();
+        showToast(`任务失败`, 'error');
         state.isGenerating = false;
         renderGenerateBtn();
-        addTaskToHistory({ id: taskId, prompt: state.prompt, type: state.mode, status: 'failed', error: err, timestamp: Date.now() });
+        addTaskToHistory({ id: taskId, prompt: state.prompt, type: state.mode, status: 'failed', error: errMsg, timestamp: Date.now() });
       }
     } catch(e) {
       // Continue polling on network errors
@@ -1011,7 +1069,56 @@ function renderResults() {
 function hideResults() {
   $('#resultsSection').classList.add('hidden');
   $('#videoProgressCard').classList.add('hidden');
+  $('#errorDetailCard').classList.add('hidden');
   state.results = [];
+  state.lastError = null;
+}
+
+// ─── Error Detail ──────────────────────────────────────────
+function showErrorDetail() {
+  const err = state.lastError;
+  if (!err) return;
+  const card = $('#errorDetailCard');
+  const body = $('#errorDetailBody');
+  const title = $('#errorDetailTitle');
+  const code = $('#errorDetailCode');
+  const hint = $('#errorDetailHint');
+
+  let titleText = err.type === 'video' ? '视频生成失败' : '图片生成失败';
+  title.textContent = titleText;
+  code.textContent = err.code ? `错误码: ${err.code}` : '';
+  code.style.display = err.code ? 'inline' : 'none';
+  body.textContent = err.message || '未知错误';
+
+  // Suggestions based on error type
+  let hintText = '';
+  const msg = (err.message || '').toLowerCase();
+  if (msg.includes('400') || msg.includes('invalid')) {
+    hintText = '💡 可能是请求参数有误，请检查图片格式或Prompt内容';
+  } else if (msg.includes('401') || msg.includes('auth')) {
+    hintText = '💡 API Key 无效或已过期，请在设置中更新';
+  } else if (msg.includes('403')) {
+    hintText = '💡 无权限访问，请检查 API Key 是否有对应模型的权限';
+  } else if (msg.includes('429') || msg.includes('rate')) {
+    hintText = '💡 请求过于频繁，请稍等片刻后重试';
+  } else if (msg.includes('500') || msg.includes('server')) {
+    hintText = '💡 服务端异常，请稍后重试';
+  } else if (msg.includes('timeout') || msg.includes('超时')) {
+    hintText = '💡 视频生成时间较长，可在任务列表中查看历史记录';
+  } else if (msg.includes('base64') || msg.includes('image')) {
+    hintText = '💡 图片格式可能有问题，请尝试换一张图片或调整图片大小';
+  } else if (msg.includes('cors') || msg.includes('network') || msg.includes('fetch')) {
+    hintText = '💡 网络连接问题，请在设置中切换代理模式';
+  } else {
+    hintText = '💡 请检查网络连接和 API Key 是否有效，或稍后重试';
+  }
+  hint.textContent = hintText;
+  card.classList.remove('hidden');
+}
+
+function hideErrorDetail() {
+  $('#errorDetailCard').classList.add('hidden');
+  state.lastError = null;
 }
 
 function showVideoProgress(taskId) {
@@ -1105,7 +1212,23 @@ function showToast(msg, type = 'info') {
   t.textContent = msg;
   t.className = `toast ${type} show`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+  const duration = type === 'error' ? 5000 : 3000;
+  toastTimer = setTimeout(() => t.classList.remove('show'), duration);
+
+  // Error toast: tap to scroll to error detail
+  if (type === 'error') {
+    t.style.pointerEvents = 'auto';
+    t.style.cursor = 'pointer';
+    t.onclick = () => {
+      const card = $('#errorDetailCard');
+      if (card && !card.classList.contains('hidden')) {
+        card.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
+  } else {
+    t.style.pointerEvents = 'none';
+    t.onclick = null;
+  }
 }
 
 // ─── Image Input ───────────────────────────────────────────
@@ -1303,6 +1426,60 @@ $('#btnGenerate').onclick = () => {
   else generateImage();
 };
 
+// ─── Error detail close ─────────────────────────────────────
+$('#errorDetailClose').onclick = () => hideErrorDetail();
+
+// ─── Task deletion ─────────────────────────────────────────
+let taskSelectMode = false;
+let selectedTasks = new Set();
+
+function toggleTaskSelect() {
+  taskSelectMode = !taskSelectMode;
+  selectedTasks.clear();
+  if (taskSelectMode) {
+    $('#pageTasks').classList.add('task-select-mode');
+    $('#btnTaskSelect').textContent = '取消';
+    $('#btnTaskDeleteSelected').classList.remove('hidden');
+  } else {
+    $('#pageTasks').classList.remove('task-select-mode');
+    $('#btnTaskSelect').textContent = '选择';
+    $('#btnTaskDeleteSelected').classList.add('hidden');
+  }
+  renderTaskPage();
+}
+
+function toggleTaskSelection(taskId) {
+  if (selectedTasks.has(taskId)) {
+    selectedTasks.delete(taskId);
+  } else {
+    selectedTasks.add(taskId);
+  }
+  renderTaskPage();
+}
+
+function deleteTask(taskId) {
+  const tasks = loadTasks();
+  const updated = tasks.filter(t => t.id !== taskId);
+  saveTasks(updated);
+  selectedTasks.delete(taskId);
+  renderTaskPage();
+}
+
+function deleteSelectedTasks() {
+  if (selectedTasks.size === 0) { showToast('请先选择要删除的任务', 'info'); return; }
+  if (!confirm(`确定删除已选择的 ${selectedTasks.size} 个任务？`)) return;
+  const tasks = loadTasks();
+  const updated = tasks.filter(t => !selectedTasks.has(t.id));
+  saveTasks(updated);
+  selectedTasks.clear();
+  taskSelectMode = false;
+  $('#pageTasks').classList.remove('task-select-mode');
+  $('#btnTaskSelect').textContent = '选择';
+  $('#btnTaskDeleteSelected').classList.add('hidden');
+  renderTaskPage();
+  showToast(`已删除`, 'success');
+}
+
 // ─── Task Page ──────────────────────────────────────────────
 function renderTaskPage() {
   const tasks = loadTasks();
@@ -1311,16 +1488,24 @@ function renderTaskPage() {
 
   const activeEl = $('#activeTasks');
   const activeEmpty = $('#activeTasksEmpty');
-  activeEl.innerHTML = active.map(t => `
-    <div class="task-card">
+  activeEl.innerHTML = (active.length > 0
+    ? `<div class="task-toolbar">
+        <button class="btn-secondary" id="btnTaskSelect" style="font-size:13px">选择</button>
+        <button class="btn-secondary hidden" id="btnTaskDeleteSelected" style="color:var(--error);border-color:var(--error);font-size:13px">🗑 删除所选</button>
+        <span class="task-count">${active.length} 个任务</span>
+      </div>`
+    : '')
+    + active.map(t => `
+    <div class="task-card${selectedTasks.has(t.id) ? ' selected' : ''}" data-task-id="${t.id}" onclick="${taskSelectMode ? `toggleTaskSelection('${t.id}')` : ''}">
+      ${!taskSelectMode ? `<button class="task-delete-btn" onclick="event.stopPropagation();if(confirm('确定删除此任务？'))deleteTask('${t.id}')" title="删除">🗑</button>` : `<div class="task-select-check">${selectedTasks.has(t.id) ? '✓' : ''}</div>`}
       <div class="task-card-header">
         <span class="task-type">${getModeEmoji(t.mode || t.type)} ${getModeName(t.mode || t.type)}</span>
         <span class="task-status ${t.status === 'completed' ? 'success' : t.status === 'failed' ? 'failed' : 'processing'}">${getStatusEmoji(t.status)} ${getStatusName(t.status)}</span>
       </div>
       <div class="task-prompt">${escapeHtml(t.prompt || '')}</div>
       ${t.status === 'processing' || t.status === 'queued' ? '<div class="progress-bar-wrap"><div class="progress-bar-fill indeterminate"></div></div>' : ''}
-      ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 下载</button>` : ''}
-      ${t.error ? `<div style="color:var(--error);font-size:12px;margin-top:4px">${escapeHtml(String(t.error))}</div>` : ''}
+      ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="event.stopPropagation();downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 下载</button>` : ''}
+      ${t.error ? `<div class="error-detail-body" style="margin-top:8px;max-height:80px;font-size:11px" onclick="event.stopPropagation()">❌ ${escapeHtml(String(t.error))}</div>` : ''}
       <div class="task-time">${new Date(t.timestamp).toLocaleString('zh-CN')}</div>
     </div>
   `).join('');
@@ -1328,18 +1513,33 @@ function renderTaskPage() {
 
   const histEl = $('#historyTasks');
   const histEmpty = $('#historyTasksEmpty');
-  histEl.innerHTML = history.slice(0, 20).map(t => `
-    <div class="task-card">
+  histEl.innerHTML = (history.length > 0
+    ? `<div class="task-toolbar">
+        <span class="task-count">${history.length} 条记录</span>
+      </div>`
+    : '')
+    + history.slice(0, 20).map(t => `
+    <div class="task-card${selectedTasks.has(t.id) ? ' selected' : ''}" data-task-id="${t.id}" onclick="${taskSelectMode ? `toggleTaskSelection('${t.id}')` : ''}">
+      ${!taskSelectMode ? `<button class="task-delete-btn" onclick="event.stopPropagation();if(confirm('确定删除此任务？'))deleteTask('${t.id}')" title="删除">🗑</button>` : `<div class="task-select-check">${selectedTasks.has(t.id) ? '✓' : ''}</div>`}
       <div class="task-card-header">
         <span class="task-type">${getModeEmoji(t.mode || t.type)} ${getModeName(t.mode || t.type)}</span>
         <span class="task-status ${t.status === 'completed' ? 'success' : 'failed'}">${getStatusEmoji(t.status)} ${getStatusName(t.status)}</span>
       </div>
       <div class="task-prompt">${escapeHtml(t.prompt || '')}</div>
-      ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 重新下载</button>` : ''}
+      ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="event.stopPropagation();downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 重新下载</button>` : ''}
+      ${t.error ? `<div class="error-detail-body" style="margin-top:8px;max-height:80px;font-size:11px" onclick="event.stopPropagation()">❌ ${escapeHtml(String(t.error))}</div>` : ''}
       <div class="task-time">${new Date(t.timestamp).toLocaleString('zh-CN')}</div>
     </div>
   `).join('');
   histEmpty.style.display = history.length === 0 ? 'block' : 'none';
+
+  // Re-bind select/delete toolbar buttons
+  setTimeout(() => {
+    const selBtn = $('#btnTaskSelect');
+    const delSelBtn = $('#btnTaskDeleteSelected');
+    if (selBtn) selBtn.onclick = toggleTaskSelect;
+    if (delSelBtn) delSelBtn.onclick = deleteSelectedTasks;
+  }, 0);
 }
 
 function getModeEmoji(mode) {
