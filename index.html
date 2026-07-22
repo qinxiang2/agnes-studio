@@ -643,14 +643,15 @@ function clarify(str) { try { return atob(str).split('').reverse().join(''); } c
 
 // ─── API layer ─────────────────────────────────────────────
 const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
+const AGNES_ROOT = 'https://apihub.agnes-ai.com';
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
 ];
 
 async function callAgnes(endpoint, options = {}) {
-  const { method = 'GET', body = null, apiKey = state.apiKey } = options;
-  const url = `${AGNES_BASE}${endpoint}`;
+  const { method = 'GET', body = null, apiKey = state.apiKey, base = AGNES_BASE } = options;
+  const url = `${base}${endpoint}`;
   const headers = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -790,43 +791,13 @@ function calcNumFrames(duration, fps) {
   return Math.min(Math.max(n * 8 + 1, 1), 441);
 }
 
-function parseVideoId(raw) {
-  // Agnes returns video_id like: video_<base64(litellm:...;video_id:REAL_ID)>
-  // We need to extract the real ID for polling
-  if (!raw || !raw.startsWith('video_')) return raw || '';
-
-  const b64 = raw.slice(6); // Remove "video_" prefix (6 chars)
-  let decoded = null;
-
-  // Try URL-safe base64 decode
-  try {
-    let fixed = b64.replace(/-/g, '+').replace(/_/g, '/');
-    const pad = fixed.length % 4;
-    if (pad) fixed += '='.repeat(4 - pad);
-    decoded = atob(fixed);
-  } catch(e) {}
-
-  // Try standard base64 decode
-  if (!decoded) {
-    try {
-      let fixed = b64;
-      const pad = fixed.length % 4;
-      if (pad) fixed += '='.repeat(4 - pad);
-      decoded = atob(fixed);
-    } catch(e) {}
-  }
-
-  if (decoded) {
-    // Extract video_id:REAL_ID from decoded string
-    const match = decoded.match(/video_id:([^;]+)/);
-    if (match) return match[1];
-  }
-
-  // Fallback: check if raw contains "video_id:" directly
-  const idx = raw.indexOf('video_id:');
-  if (idx >= 0) return raw.slice(idx + 9);
-
-  return raw;
+function getVideoDimensions(resolution) {
+  // Map resolution label to width x height
+  const map = {
+    '720p':  { w: 1280, h: 720 },
+    '1080p': { w: 1920, h: 1080 },
+  };
+  return map[resolution] || map['720p'];
 }
 
 async function createVideo() {
@@ -839,35 +810,31 @@ async function createVideo() {
 
   const s = state.settings;
   const numFrames = calcNumFrames(s.videoDuration, s.videoFps);
+  const dims = getVideoDimensions(s.videoResolution);
 
   const payload = {
     model: s.videoModel,
     prompt: state.prompt,
-    resolution: s.videoResolution,
-    duration: s.videoDuration,
-    fps: s.videoFps,
+    width: dims.w,
+    height: dims.h,
     num_frames: numFrames,
+    frame_rate: s.videoFps,
   };
   if (s.videoAudio) payload.generate_audio = true;
 
-  // 图生视频: 首帧图片用 image 字段；关键帧动画用 extra_body.image
+  // 图生视频: 首帧图片用 image 字段
   if (state.mode === 'image-to-video' && state.imageBase64) {
     payload.image = state.imageBase64;
   }
 
   try {
-    console.log('Creating video with num_frames:', numFrames);
+    console.log('Creating video:', JSON.stringify({...payload, image: payload.image ? '(base64)' : undefined}));
     const result = await callAgnes('/videos', { method: 'POST', body: payload });
+    console.log('Video create response:', JSON.stringify(result));
 
-    // 优先使用 video_id（新接入），解析后用于轮询
-    const rawVideoId = result.video_id || '';
-    const taskId = result.task_id || result.id || '';
-    const parsedVid = parseVideoId(rawVideoId);
-    const queryId = parsedVid || taskId;
-
-    if (!queryId) throw new Error('无法获取 video_id 或 task_id');
-
-    console.log('Video created - raw video_id:', rawVideoId, 'parsed:', parsedVid, 'task_id:', taskId, 'queryId:', queryId);
+    // 使用 video_id 轮询（官方示例: GET /agnesapi?video_id=xxx）
+    const queryId = result.video_id || result.task_id || result.id;
+    if (!queryId) throw new Error('无法获取 video_id');
 
     state.activeVideoTaskId = queryId;
     state.videoStartTime = Date.now();
@@ -882,7 +849,7 @@ async function createVideo() {
   }
 }
 
-function startPollTask(taskId) {
+function startPollTask(queryId) {
   const card = $('#videoProgressCard');
   card.classList.remove('hidden');
 
@@ -890,38 +857,43 @@ function startPollTask(taskId) {
     const elapsed = Math.floor((Date.now() - state.videoStartTime) / 1000);
     $('#videoElapsed').textContent = `${elapsed}s`;
 
-    // Progress estimate
-    const pct = Math.min(Math.floor(elapsed / 3), 90);
-    $('#progressFill').style.width = pct + '%';
-
     // Timeout
     if (elapsed > 600) {
       clearInterval(timer);
       state.activeVideoTimer = null;
-      state.lastError = { message: '视频生成超时（超过10分钟）。任务ID: ' + taskId + '，可稍后手动查询', code: 'TIMEOUT', type: 'video', timestamp: Date.now() };
+      state.lastError = { message: '视频生成超时（超过10分钟）。video_id: ' + queryId, code: 'TIMEOUT', type: 'video', timestamp: Date.now() };
       showErrorDetail();
-      showToast('任务超时，请稍后手动查询', 'error');
+      showToast('任务超时', 'error');
       state.isGenerating = false;
       renderGenerateBtn();
-      addTaskToHistory({ id: taskId, prompt: state.prompt, type: state.mode, status: 'timeout', timestamp: Date.now() });
+      addTaskToHistory({ id: queryId, prompt: state.prompt, type: state.mode, status: 'timeout', timestamp: Date.now() });
       return;
     }
 
     try {
-      const result = await callAgnes(`/videos/${taskId}`, { method: 'GET' });
+      // 官方轮询端点: GET /agnesapi?video_id=xxx（根路径，不在 /v1 下）
+      const result = await callAgnes(`/agnesapi?video_id=${encodeURIComponent(queryId)}`, { method: 'GET', base: AGNES_ROOT });
       const status = result.status || result.state;
-      console.log('Poll status:', status, 'Full result keys:', Object.keys(result).join(','));
+      const progress = result.progress || 0;
+
+      console.log('Poll:', status, 'Progress:', progress, '%');
+
+      // 使用 API 返回的真实进度
+      $('#progressFill').style.width = Math.max(progress, 5) + '%';
+      $('#progressFill').classList.remove('indeterminate');
+
       if (status) {
         const statusMap = {
           'queued': `排队中... (${elapsed}s)`,
-          'processing': `正在生成... (${elapsed}s)`,
-          'in_progress': `正在生成... (${elapsed}s)`,
-          'running': `正在生成... (${elapsed}s)`,
-          'generating': `正在生成... (${elapsed}s)`,
+          'processing': `正在生成 ${progress}% (${elapsed}s)`,
+          'in_progress': `正在生成 ${progress}% (${elapsed}s)`,
+          'running': `正在生成 ${progress}% (${elapsed}s)`,
+          'generating': `正在生成 ${progress}% (${elapsed}s)`,
         };
         $('#videoStatusText').textContent = statusMap[status] || `状态: ${status} (${elapsed}s)`;
       }
 
+      // 完成
       if (['succeeded', 'success', 'completed', 'done'].includes(status)) {
         clearInterval(timer);
         state.activeVideoTimer = null;
@@ -930,47 +902,40 @@ function startPollTask(taskId) {
         state.isGenerating = false;
         renderGenerateBtn();
 
-        // Extract video URL
-        let videoUrl = null;
-        for (const key of ['remixed_from_video_id', 'video_url', 'url', 'download_url']) {
-          const v = result[key];
-          if (typeof v === 'string' && v.startsWith('http')) { videoUrl = v; break; }
-        }
-        if (!videoUrl && result.output) {
-          videoUrl = result.output.video_url || result.output.url;
-        }
-
-        if (videoUrl) {
+        // 从 metadata.url 提取视频地址
+        const videoUrl = (result.metadata && result.metadata.url) || result.url || result.video_url || '';
+        if (videoUrl && videoUrl.startsWith('http')) {
           state.results = [{
-            type: 'video',
-            url: videoUrl,
-            blobUrl: videoUrl,
-            prompt: state.prompt,
-            timestamp: Date.now(),
+            type: 'video', url: videoUrl, blobUrl: videoUrl,
+            prompt: state.prompt, timestamp: Date.now(),
           }];
           renderResults();
           addToHistory(state.results);
         } else {
-          showToast('视频生成完成但无法获取下载链接', 'error');
+          console.error('No video URL found. Response:', JSON.stringify(result));
+          state.lastError = { message: '视频生成完成但无法获取下载链接。完整响应: ' + JSON.stringify(result).slice(0, 500), code: 'NO_URL', type: 'video', timestamp: Date.now() };
+          showErrorDetail();
+          showToast('无法获取下载链接', 'error');
         }
       }
 
+      // 失败
       if (['failed', 'error', 'cancelled'].includes(status)) {
         clearInterval(timer);
         state.activeVideoTimer = null;
         const err = result.error || result.message || status;
         const errMsg = typeof err === 'object' ? JSON.stringify(err) : String(err);
-        $('#videoStatusText').textContent = `❌ 失败: ${errMsg}`;
-        state.lastError = { message: errMsg, code: status, type: 'video', timestamp: Date.now(), taskId };
+        $('#videoStatusText').textContent = `❌ 失败`;
+        state.lastError = { message: errMsg, code: status, type: 'video', timestamp: Date.now(), taskId: queryId };
         showErrorDetail();
         showToast(`任务失败`, 'error');
         state.isGenerating = false;
         renderGenerateBtn();
-        addTaskToHistory({ id: taskId, prompt: state.prompt, type: state.mode, status: 'failed', error: errMsg, timestamp: Date.now() });
+        addTaskToHistory({ id: queryId, prompt: state.prompt, type: state.mode, status: 'failed', error: errMsg, timestamp: Date.now() });
       }
     } catch(e) {
-      // Continue polling on network errors
       console.error('Poll error:', e);
+      // 网络错误继续轮询
     }
   }, 5000);
 
@@ -981,7 +946,7 @@ function startPollTask(taskId) {
     state.isGenerating = false;
     renderGenerateBtn();
     $('#videoProgressCard').classList.add('hidden');
-    addTaskToHistory({ id: taskId, prompt: state.prompt, type: state.mode, status: 'cancelled', timestamp: Date.now() });
+    addTaskToHistory({ id: queryId, prompt: state.prompt, type: state.mode, status: 'cancelled', timestamp: Date.now() });
     showToast('已取消任务', 'info');
   };
 }
