@@ -1287,6 +1287,8 @@ function showErrorDetail() {
     hintText = '💡 图片格式可能有问题，请尝试换一张图片或调整图片大小';
   } else if (msg.includes('cors') || msg.includes('network') || msg.includes('fetch')) {
     hintText = '💡 网络连接问题，请在设置中切换代理模式';
+  } else if (msg.includes('unable to generate') || msg.includes('content') || msg.includes('modify your prompt') || msg.includes('safety') || msg.includes('policy')) {
+    hintText = '🛡️ 内容被安全策略拦截。请修改提示词，或更换输入图片后重试。图生图时输入图片本身也会经过内容审查';
   } else {
     hintText = '💡 请检查网络连接和 API Key 是否有效，或稍后重试';
   }
