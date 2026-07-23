@@ -329,8 +329,18 @@ img,video{max-width:100%;display:block}
 }
 
 /* ═══════════════════════════════════════════ Chat ═══════════════════════════════════════════ */
-#pageChat{display:flex;flex-direction:column;height:calc(100vh - 140px);height:calc(100dvh - 140px);padding-bottom:0}
-.chat-messages{flex:1;overflow-y:auto;padding:12px 0;display:flex;flex-direction:column;gap:10px}
+#pageChat.active{display:flex;flex-direction:column;height:calc(100vh - 140px);height:calc(100dvh - 140px);padding:0}
+.chat-header{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.chat-header-btn{width:32px;height:32px;border-radius:50%;border:none;background:var(--bg);color:var(--text);font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.chat-header-title{flex:1;font-size:14px;font-weight:600;color:var(--text);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.chat-history-list{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto}
+.chat-history-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-xs);background:var(--bg);border:1px solid var(--border)}
+.chat-history-item.active{border-color:var(--accent);background:rgba(124,58,237,0.08)}
+.chat-history-info{flex:1;min-width:0}
+.chat-history-title{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-history-meta{font-size:11px;color:var(--text-muted);margin-top:2px}
+.chat-history-del{width:28px;height:28px;border-radius:50%;border:none;background:rgba(239,68,68,0.15);color:var(--error);font-size:14px;flex-shrink:0}
 .chat-welcome{text-align:center;padding:30px 10px}
 .chat-welcome-icon{font-size:48px;margin-bottom:10px}
 .chat-welcome h3{font-size:17px;margin-bottom:6px;color:var(--text)}
@@ -592,8 +602,13 @@ img,video{max-width:100%;display:block}
 
 <!-- ═══════════════════════════════════════ Page: Chat ═══════════════════════════════════════ -->
 <div class="page" id="pageChat">
+  <div class="chat-header">
+    <button class="chat-header-btn" id="btnChatHistory">📋</button>
+    <span class="chat-header-title" id="chatTitle">AI 提示词助手</span>
+    <button class="chat-header-btn" id="btnNewChat">＋</button>
+  </div>
   <div class="chat-messages" id="chatMessages">
-    <div class="chat-welcome">
+    <div class="chat-welcome" id="chatWelcome">
       <div class="chat-welcome-icon">💬</div>
       <h3>AI 提示词助手</h3>
       <p>我可以帮你生成图片和视频的提示词</p>
@@ -608,6 +623,17 @@ img,video{max-width:100%;display:block}
   <div class="chat-input-area">
     <input type="text" class="chat-input" id="chatInput" placeholder="描述你想要生成的画面...">
     <button class="chat-send-btn" id="chatSendBtn">➤</button>
+  </div>
+</div>
+
+<!-- Chat history modal -->
+<div class="modal-overlay" id="chatHistoryModal">
+  <div class="modal">
+    <div class="modal-title">📋 对话历史</div>
+    <div class="chat-history-list" id="chatHistoryList"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="btnCloseChatHistory">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -1766,7 +1792,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // ─── Chat (Agnes 2.0 Flash) ─────────────────────────────────
-const CHAT_STORAGE = 'agnes_studio_chat';
+const CHAT_STORAGE = 'agnes_studio_convs';
 const CHAT_SYSTEM_PROMPT = `你是 AI 提示词工程专家，专门帮助用户生成高质量的 AI 图片和视频提示词。
 
 **语言规则：默认使用中文回复。所有说明、分析、建议都用中文输出。只有用户明确要求使用其他语言时才切换。**
@@ -1847,62 +1873,105 @@ const CHAT_SYSTEM_PROMPT = `你是 AI 提示词工程专家，专门帮助用户
 5. 图片提示词必须同时给出负面提示词（中文）
 6. 所有分析、解释、建议均用中文，提示词内容本身根据用户要求决定语言`;
 
-function loadChatHistory() {
+function loadConversations() {
   try { return JSON.parse(localStorage.getItem(CHAT_STORAGE) || '[]'); } catch(e) { return []; }
 }
-function saveChatHistory(msgs) { localStorage.setItem(CHAT_STORAGE, JSON.stringify(msgs.slice(-50))); }
-let chatMessages = loadChatHistory();
+function saveConversations(convs) { localStorage.setItem(CHAT_STORAGE, JSON.stringify(convs)); }
+
+let conversations = loadConversations();
+let activeConvId = conversations.length > 0 ? conversations[0].id : null;
 let isChatting = false;
 
-function renderChat() {
-  const el = $('#chatMessages');
-  if (chatMessages.length === 0) {
-    el.innerHTML = `<div class="chat-welcome">
-      <div class="chat-welcome-icon">💬</div>
-      <h3>AI 提示词助手</h3>
-      <p>我可以帮你生成图片和视频的提示词</p>
-      <div class="chat-suggestions">
-        <button class="chat-suggestion" data-prompt="帮我写一个生成赛博朋克城市夜景的图片提示词">🌃 赛博朋克城市</button>
-        <button class="chat-suggestion" data-prompt="帮我写一个女孩在海边微笑的视频提示词，要有镜头运动">🌊 海边人物视频</button>
-        <button class="chat-suggestion" data-prompt="帮我写一个产品展示视频的提示词，要突出产品质感">📦 产品展示视频</button>
-        <button class="chat-suggestion" data-prompt="帮我优化这段提示词：一个女孩在花园里">✏️ 优化提示词</button>
-      </div></div>`;
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function getActiveConv() { return conversations.find(c => c.id === activeConvId) || null; }
+
+function newConversation() {
+  const conv = { id: genId(), title: '新对话', messages: [], createdAt: Date.now() };
+  conversations.unshift(conv);
+  activeConvId = conv.id;
+  saveConversations(convs);
+  renderChat();
+  updateChatTitle();
+}
+
+function switchConversation(id) {
+  activeConvId = id;
+  saveConversations(convs);
+  renderChat();
+  updateChatTitle();
+  $('#chatHistoryModal').classList.remove('show');
+}
+
+function deleteConversation(id) {
+  if (!confirm('确定删除此对话？')) return;
+  conversations = conversations.filter(c => c.id !== id);
+  if (activeConvId === id) activeConvId = conversations.length > 0 ? conversations[0].id : null;
+  saveConversations(conversations);
+  renderChat();
+  updateChatTitle();
+  renderChatHistoryList();
+}
+
+function updateChatTitle() {
+  const conv = getActiveConv();
+  $('#chatTitle').textContent = conv ? conv.title : 'AI 提示词助手';
+}
+
+function renderChatHistoryList() {
+  const el = $('#chatHistoryList');
+  if (conversations.length === 0) {
+    el.innerHTML = '<div class="empty-state"><p>暂无对话记录</p></div>';
   } else {
-    el.innerHTML = chatMessages.map(m => {
+    el.innerHTML = conversations.map(c => `
+      <div class="chat-history-item${c.id === activeConvId ? ' active' : ''}" onclick="switchConversation('${c.id}')">
+        <div class="chat-history-info">
+          <div class="chat-history-title">${escapeHtml(c.title)}</div>
+          <div class="chat-history-meta">${c.messages.length} 条消息 · ${new Date(c.createdAt).toLocaleString('zh-CN')}</div>
+        </div>
+        <button class="chat-history-del" onclick="event.stopPropagation();deleteConversation('${c.id}')">🗑</button>
+      </div>`).join('');
+  }
+}
+
+function renderChat() {
+  const conv = getActiveConv();
+  const el = $('#chatMessages');
+  const welcome = $('#chatWelcome');
+
+  if (!conv || conv.messages.length === 0) {
+    welcome.style.display = 'block';
+    el.querySelectorAll('.chat-msg').forEach(m => m.remove());
+  } else {
+    welcome.style.display = 'none';
+    el.querySelectorAll('.chat-msg').forEach(m => m.remove());
+
+    conv.messages.forEach(m => {
       const isUser = m.role === 'user';
       let content = escapeHtml(m.content);
-      // Extract code blocks (prompts) and add "use" button
       content = content.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
         const cleanCode = code.trim();
         return `<span class="prompt-block">${escapeHtml(cleanCode)}<button class="chat-use-btn" data-prompt="${escapeHtml(cleanCode).replace(/"/g,'&quot;')}">📋 使用此提示词</button></span>`;
       });
-      return `<div class="chat-msg ${isUser ? 'user' : 'assistant'}">
-        <div class="chat-msg-avatar">${isUser ? '👤' : '🤖'}</div>
-        <div class="chat-msg-bubble">${content}</div>
-      </div>`;
-    }).join('');
+      const div = document.createElement('div');
+      div.className = `chat-msg ${isUser ? 'user' : 'assistant'}`;
+      div.innerHTML = `<div class="chat-msg-avatar">${isUser ? '👤' : '🤖'}</div><div class="chat-msg-bubble">${content}</div>`;
+      div.querySelectorAll('.chat-use-btn').forEach(btn => {
+        btn.onclick = () => {
+          state.prompt = btn.dataset.prompt;
+          $('#promptInput').value = btn.dataset.prompt;
+          $$('.nav-item').forEach(b => b.classList.remove('active'));
+          const gb = document.querySelector('[data-page="pageGenerate"]');
+          if (gb) gb.classList.add('active');
+          $$('.page').forEach(p => p.classList.remove('active'));
+          $('#pageGenerate').classList.add('active');
+          showToast('提示词已填入，选择模式后点击生成', 'success');
+        };
+      });
+      el.appendChild(div);
+    });
     el.scrollTop = el.scrollHeight;
   }
-  // Bind suggestion buttons
-  el.querySelectorAll('.chat-suggestion').forEach(btn => {
-    btn.onclick = () => sendChatMessage(btn.dataset.prompt);
-  });
-  // Bind "use prompt" buttons
-  el.querySelectorAll('.chat-use-btn').forEach(btn => {
-    btn.onclick = () => {
-      const prompt = btn.dataset.prompt;
-      // Navigate to generate tab and fill prompt
-      state.prompt = prompt;
-      $('#promptInput').value = prompt;
-      // Switch to generate page
-      $$('.nav-item').forEach(b => b.classList.remove('active'));
-      const genBtn = document.querySelector('[data-page="pageGenerate"]');
-      if (genBtn) genBtn.classList.add('active');
-      $$('.page').forEach(p => p.classList.remove('active'));
-      $('#pageGenerate').classList.add('active');
-      showToast('提示词已填入，选择模式后点击生成', 'success');
-    };
-  });
 }
 
 async function sendChatMessage(text) {
@@ -1911,13 +1980,22 @@ async function sendChatMessage(text) {
   const input = text || $('#chatInput').value.trim();
   if (!input) return;
 
+  if (!getActiveConv()) newConversation();
+  const conv = getActiveConv();
+  if (!conv) return;
+
+  if (conv.messages.length === 0) {
+    conv.title = input.slice(0, 30) + (input.length > 30 ? '...' : '');
+    updateChatTitle();
+  }
+
   isChatting = true;
   $('#chatInput').value = '';
   $('#chatSendBtn').disabled = true;
-  chatMessages.push({ role: 'user', content: input });
-  saveChatHistory(chatMessages);
+  conv.messages.push({ role: 'user', content: input });
+  saveConversations(conversations);
   renderChat();
-  // Show typing indicator
+
   const typingEl = document.createElement('div');
   typingEl.className = 'chat-typing show';
   typingEl.innerHTML = '<span></span><span></span><span></span>';
@@ -1927,18 +2005,18 @@ async function sendChatMessage(text) {
   try {
     const msgs = [
       { role: 'system', content: CHAT_SYSTEM_PROMPT },
-      ...chatMessages.map(m => ({ role: m.role, content: m.content })),
+      ...conv.messages.map(m => ({ role: m.role, content: m.content })),
     ];
     const result = await callAgnes('/chat/completions', {
       method: 'POST',
       body: { model: 'agnes-2.0-flash', messages: msgs, temperature: 0.7, max_tokens: 2048 },
     });
     const reply = result.choices?.[0]?.message?.content || '（未收到回复）';
-    chatMessages.push({ role: 'assistant', content: reply });
-    saveChatHistory(chatMessages);
+    conv.messages.push({ role: 'assistant', content: reply });
+    saveConversations(conversations);
   } catch(e) {
-    chatMessages.push({ role: 'assistant', content: `❌ 请求失败: ${e.message || e}` });
-    saveChatHistory(chatMessages);
+    conv.messages.push({ role: 'assistant', content: `❌ 请求失败: ${e.message || e}` });
+    saveConversations(conversations);
   } finally {
     typingEl.remove();
     isChatting = false;
@@ -1948,16 +2026,26 @@ async function sendChatMessage(text) {
   }
 }
 
-// Chat input handlers
+// Chat input & header buttons
 $('#chatSendBtn').onclick = () => sendChatMessage();
 $('#chatInput').onkeydown = (e) => { if (e.key === 'Enter') sendChatMessage(); };
+$('#btnNewChat').onclick = () => { newConversation(); showToast('新对话已创建', 'success'); };
+$('#btnChatHistory').onclick = () => { renderChatHistoryList(); $('#chatHistoryModal').classList.add('show'); };
+$('#btnCloseChatHistory').onclick = () => $('#chatHistoryModal').classList.remove('show');
+$('#chatHistoryModal').onclick = function(e) { if (e.target === this) this.classList.remove('show'); };
 
-// Clear chat
+// Bind welcome suggestion buttons once
+$('#chatWelcome').querySelectorAll('.chat-suggestion').forEach(btn => {
+  btn.onclick = () => sendChatMessage(btn.dataset.prompt);
+});
+
 function clearChatHistory() {
-  chatMessages = [];
-  saveChatHistory(chatMessages);
+  conversations = [];
+  activeConvId = null;
+  saveConversations(conversations);
   renderChat();
-  showToast('对话已清除', 'success');
+  updateChatTitle();
+  showToast('所有对话已清除', 'success');
 }
 
 // ─── Init ───────────────────────────────────────────────────
@@ -1967,6 +2055,7 @@ function init() {
   renderSettingsForm();
   updateStatusDot();
   renderChat();
+  updateChatTitle();
   $('#promptInput').value = state.prompt || '';
   $('#promptInput').oninput = () => { state.prompt = $('#promptInput').value; };
 }
