@@ -755,9 +755,7 @@ async function generateImage() {
       response_format: 'url',  // 文生图 URL 输出 — 必须放在 extra_body 内部
     },
   };
-  if (s.imageCount > 1) payload.n = s.imageCount;
-  if (s.imageQuality && s.imageQuality !== 'standard') payload.quality = s.imageQuality;
-  if (s.imageStyle) payload.style = s.imageStyle;
+  // 注: agnes-image-2.1-flash 不支持 style/quality/n 参数，已移除
 
   // 图生图: 在 extra_body.image 中传入图片数组
   if (state.mode === 'image-to-image' && state.imageBase64) {
@@ -1026,31 +1024,7 @@ function renderSettingsGrid() {
         <option value="3:2" ${s.imageRatio==='3:2'?'selected':''}>3:2 (横版)</option>
         <option value="21:9" ${s.imageRatio==='21:9'?'selected':''}>21:9 (超宽)</option>
       </select></div>`;
-    html += `<div class="form-group">
-      <label class="form-label">质量</label>
-      <select class="form-select setting-field" data-key="imageQuality">
-        <option value="standard" ${s.imageQuality==='standard'?'selected':''}>标准</option>
-        <option value="hd" ${s.imageQuality==='hd'?'selected':''}>高清</option>
-      </select></div>`;
-    html += `<div class="form-group">
-      <label class="form-label">风格</label>
-      <select class="form-select setting-field" data-key="imageStyle">
-        <option value="">无</option>
-        <option value="anime" ${s.imageStyle==='anime'?'selected':''}>动漫</option>
-        <option value="photographic" ${s.imageStyle==='photographic'?'selected':''}>摄影</option>
-        <option value="digital-art" ${s.imageStyle==='digital-art'?'selected':''}>数字艺术</option>
-        <option value="cinematic" ${s.imageStyle==='cinematic'?'selected':''}>电影</option>
-        <option value="3d-model" ${s.imageStyle==='3d-model'?'selected':''}>3D</option>
-        <option value="pixel-art" ${s.imageStyle==='pixel-art'?'selected':''}>像素</option>
-      </select></div>`;
-    html += `<div class="form-group">
-      <label class="form-label">数量</label>
-      <select class="form-select setting-field" data-key="imageCount">
-        <option value="1" ${s.imageCount===1?'selected':''}>1</option>
-        <option value="2" ${s.imageCount===2?'selected':''}>2</option>
-        <option value="3" ${s.imageCount===3?'selected':''}>3</option>
-        <option value="4" ${s.imageCount===4?'selected':''}>4</option>
-      </select></div>`;
+`;
   }
   if (isVideo) {
     html += `<div class="form-group">
