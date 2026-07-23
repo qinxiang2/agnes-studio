@@ -1,0 +1,4 @@
+﻿name = "agnes-proxy"
+main = "agnes-proxy-worker.js"
+compatibility_date = "2025-01-01"
+account_id = "07bdcb69fda0bfbc556ea24b2358910f"

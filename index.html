@@ -650,10 +650,10 @@ function clarify(str) { try { return atob(str).split('').reverse().join(''); } c
 // ─── API layer ─────────────────────────────────────────────
 const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
 const AGNES_ROOT = 'https://apihub.agnes-ai.com';
+const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?';
 const CORS_PROXIES = [
+  AGNES_PROXY,
   'https://corsproxy.io/?',
-  'https://api.cors.lol/?url=',
-  'https://cors-anywhere.herokuapp.com/',
 ];
 
 async function callAgnes(endpoint, options = {}) {
