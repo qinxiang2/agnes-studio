@@ -1648,7 +1648,21 @@ $('#closeBanner').onclick = () => {
 
 // ─── Service Worker ─────────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // 检测 SW 更新，自动刷新页面
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+            // 新版本已激活，提示用户刷新
+            showToast('有新版本，刷新页面以更新', 'info');
+            setTimeout(() => location.reload(), 2000);
+          }
+        });
+      }
+    });
+  }).catch(() => {});
 }
 
 // ─── Init ───────────────────────────────────────────────────
