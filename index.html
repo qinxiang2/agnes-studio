@@ -436,6 +436,8 @@ img,video{max-width:100%;display:block}
     <button class="mode-tab" data-mode="image-to-video">📹 图生视频</button>
   </div>
 
+  <div class="provider-indicator" id="providerIndicator" style="font-size:11px;color:var(--text-muted);text-align:center;margin-bottom:12px;display:none"></div>
+
   <!-- Prompt -->
   <div class="form-group">
     <label class="form-label" id="promptLabel">描述你想要生成的图像内容</label>
@@ -548,6 +550,38 @@ img,video{max-width:100%;display:block}
   </div>
 
   <div class="settings-section">
+    <div class="settings-section-title">🤖 模型供应商</div>
+    <div class="form-group">
+      <label class="form-label">图片生成供应商</label>
+      <select class="form-select" id="imageProvider">
+        <option value="agnes">Agnes AI（默认）</option>
+        <option value="replicate">FLUX.1 Pro（Replicate · 宽松审查）</option>
+      </select>
+    </div>
+    <div class="form-group" id="replicateKeyGroup" style="display:none">
+      <label class="form-label">Replicate API Key</label>
+      <div class="api-key-wrap">
+        <input type="password" class="form-input" id="replicateKeyInput" placeholder="r8_xxxxxxxxxxxxxxxx">
+        <button class="btn-secondary" id="toggleReplicateKeyVis" style="flex-shrink:0">👁</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">视频生成供应商</label>
+      <select class="form-select" id="videoProvider">
+        <option value="agnes">Agnes AI（默认）</option>
+        <option value="atlascloud">Seedance 1.5 Pro Spicy（Atlas Cloud · 宽松审查）</option>
+      </select>
+    </div>
+    <div class="form-group" id="atlasCloudKeyGroup" style="display:none">
+      <label class="form-label">Atlas Cloud API Key</label>
+      <div class="api-key-wrap">
+        <input type="password" class="form-input" id="atlasCloudKeyInput" placeholder="ac_xxxxxxxxxxxxxxxx">
+        <button class="btn-secondary" id="toggleAtlasCloudKeyVis" style="flex-shrink:0">👁</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section">
     <div class="settings-section-title">🎛 默认参数</div>
     <div class="form-group">
       <label class="form-label">默认分辨率档位</label>
@@ -596,7 +630,7 @@ img,video{max-width:100%;display:block}
 
   <div class="settings-section" style="text-align:center">
     <p style="color:var(--text-muted);font-size:13px">Agnes AI Studio v1.0</p>
-    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">基于 Agnes AI API</p>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">Agnes AI / Replicate / Atlas Cloud</p>
   </div>
 </div>
 
@@ -684,7 +718,7 @@ function loadState() {
 }
 
 function saveState(s) {
-  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl };
+  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl, imageProvider: s.imageProvider, videoProvider: s.videoProvider, replicateKey: s.replicateKey, atlasCloudKey: s.atlasCloudKey };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 
@@ -714,6 +748,10 @@ const state = {
   }, saved.settings || {}),
   proxyMode: saved.proxyMode || 'auto',
   customProxyUrl: saved.customProxyUrl || '',
+  imageProvider: saved.imageProvider || 'agnes',
+  videoProvider: saved.videoProvider || 'agnes',
+  replicateKey: saved.replicateKey || '',
+  atlasCloudKey: saved.atlasCloudKey || '',
   isGenerating: false,
   results: [],
   lastError: null,          // {message, code, type, timestamp}
@@ -817,10 +855,179 @@ async function callAgnes(endpoint, options = {}) {
   throw new Error('网络请求失败，请检查网络连接。如频繁出现，请确认 API 地址可访问');
 }
 
+// ─── Replicate API (FLUX images) ──────────────────────────
+async function callReplicate(payload) {
+  const url = 'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions';
+  const headers = {
+    'Authorization': `Bearer ${state.replicateKey}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'wait',
+  };
+
+  let lastError = null;
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ input: payload }) });
+    if (!res.ok) {
+      const errBody = await res.text();
+      let errMsg = errBody;
+      try { errMsg = JSON.parse(errBody); } catch(e) {}
+      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
+      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+    }
+    return await res.json();
+  } catch(e) {
+    if (e.isApiError || (e.code && e.code >= 400)) throw e;
+    lastError = e;
+  }
+
+  // Fallback via proxy
+  const proxies = state.customProxyUrl ? [state.customProxyUrl] : CORS_PROXIES;
+  for (const proxyBase of proxies) {
+    try {
+      const proxyUrl = proxyBase + encodeURIComponent(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      const res = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-requested-with': 'agnes-studio' },
+        body: JSON.stringify({ input: payload }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw { code: res.status, message: await res.text(), isApiError: true };
+      const data = await res.json();
+      if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+      return data;
+    } catch(e) {
+      if (e.isApiError) throw e;
+      if (e.name === 'AbortError') lastError = new Error('Replicate 代理请求超时');
+      else lastError = e;
+    }
+  }
+  if (lastError) throw lastError;
+  throw new Error('Replicate 网络请求失败');
+}
+
+// ─── Atlas Cloud API (Seedance videos) ─────────────────────
+async function callAtlasSubmit(payload) {
+  const url = 'https://api.atlascloud.ai/api/v1/model/generateVideo';
+  const headers = {
+    'Authorization': `Bearer ${state.atlasCloudKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  let lastError = null;
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+    if (!res.ok) {
+      const errBody = await res.text();
+      let errMsg = errBody;
+      try { errMsg = JSON.parse(errBody); } catch(e) {}
+      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
+      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+    }
+    return await res.json();
+  } catch(e) {
+    if (e.isApiError || (e.code && e.code >= 400)) throw e;
+    lastError = e;
+  }
+
+  const proxies = state.customProxyUrl ? [state.customProxyUrl] : CORS_PROXIES;
+  for (const proxyBase of proxies) {
+    try {
+      const proxyUrl = proxyBase + encodeURIComponent(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      const res = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-requested-with': 'agnes-studio' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw { code: res.status, message: await res.text(), isApiError: true };
+      const data = await res.json();
+      if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+      return data;
+    } catch(e) {
+      if (e.isApiError) throw e;
+      if (e.name === 'AbortError') lastError = new Error('Atlas Cloud 代理请求超时');
+      else lastError = e;
+    }
+  }
+  if (lastError) throw lastError;
+  throw new Error('Atlas Cloud 网络请求失败');
+}
+
+async function callAtlasPoll(predictionId) {
+  const url = `https://api.atlascloud.ai/api/v1/model/prediction/${encodeURIComponent(predictionId)}`;
+  const headers = { 'Authorization': `Bearer ${state.atlasCloudKey}` };
+  try {
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) throw { code: res.status, message: `HTTP ${res.status}`, isApiError: true };
+    return await res.json();
+  } catch(e) {
+    throw e;
+  }
+}
+
 // ─── Image Generation ──────────────────────────────────────
+async function generateReplicateImage() {
+  state.isGenerating = true;
+  renderGenerateBtn();
+  hideResults();
+
+  const s = state.settings;
+  const input = {
+    prompt: state.prompt,
+    aspect_ratio: s.imageRatio || '1:1',
+    output_format: 'jpg',
+    safety_tolerance: 5,
+  };
+
+  // Image-to-image: add base64 image
+  if (state.mode === 'image-to-image' && state.imageBase64) {
+    input.image = `data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`;
+  }
+
+  try {
+    const result = await callReplicate(input);
+    let outputs = result.output;
+    if (!outputs) throw new Error('Replicate 返回了空结果');
+    if (!Array.isArray(outputs)) outputs = [outputs];
+
+    state.results = outputs.map((url, i) => ({
+      type: 'image',
+      url: url,
+      blobUrl: url,
+      blob: null,
+      index: i,
+      prompt: state.prompt,
+      timestamp: Date.now(),
+    }));
+    renderResults();
+    state.lastError = null;
+    hideErrorDetail();
+    addToHistory(state.results);
+  } catch(e) {
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
+    showErrorDetail();
+    showToast('FLUX 生成失败', 'error');
+  } finally {
+    state.isGenerating = false;
+    renderGenerateBtn();
+  }
+}
+
 async function generateImage() {
   if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
   if (state.mode === 'image-to-image' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
+
+  // Provider dispatch
+  if (state.imageProvider === 'replicate') {
+    if (!state.replicateKey) { showToast('请先在设置中输入 Replicate API Key', 'error'); return; }
+    return generateReplicateImage();
+  }
 
   state.isGenerating = true;
   renderGenerateBtn();
@@ -909,9 +1116,145 @@ function getVideoDimensions(resolution, ratio) {
   return { w, h };
 }
 
+async function createAtlasVideo() {
+  state.isGenerating = true;
+  renderGenerateBtn();
+  hideResults();
+
+  const s = state.settings;
+  const isImageToVideo = state.mode === 'image-to-video';
+  const payload = {
+    model: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
+    prompt: state.prompt,
+    duration: s.videoDuration || 5,
+    resolution: s.videoResolution || '720p',
+    aspect_ratio: s.videoRatio || '16:9',
+    generate_audio: !!s.videoAudio,
+    camera_fixed: false,
+    seed: -1,
+  };
+
+  if (isImageToVideo && state.imageBase64) {
+    payload.image = `data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`;
+  }
+
+  try {
+    const result = await callAtlasSubmit(payload);
+    const predictionId = result.data && result.data.id;
+    if (!predictionId) throw new Error('无法获取 prediction_id: ' + JSON.stringify(result).slice(0, 300));
+
+    state.activeVideoTaskId = predictionId;
+    state.videoStartTime = Date.now();
+    showVideoProgress(predictionId, null);
+    startPollAtlasTask(predictionId);
+  } catch(e) {
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
+    showErrorDetail();
+    showToast('Seedance 创建任务失败', 'error');
+    state.isGenerating = false;
+    renderGenerateBtn();
+  }
+}
+
+function startPollAtlasTask(predictionId) {
+  const card = $('#videoProgressCard');
+  card.classList.remove('hidden');
+
+  const timer = setInterval(async () => {
+    const elapsed = Math.floor((Date.now() - state.videoStartTime) / 1000);
+    $('#videoElapsed').textContent = `${elapsed}s`;
+
+    if (elapsed > 600) {
+      clearInterval(timer);
+      state.activeVideoTimer = null;
+      state.lastError = { message: '视频生成超时（超过10分钟）。prediction_id: ' + predictionId, code: 'TIMEOUT', type: 'video', timestamp: Date.now() };
+      showErrorDetail();
+      showToast('任务超时', 'error');
+      state.isGenerating = false;
+      renderGenerateBtn();
+      addTaskToHistory({ id: predictionId, prompt: state.prompt, type: state.mode, status: 'timeout', timestamp: Date.now() });
+      return;
+    }
+
+    try {
+      const result = await callAtlasPoll(predictionId);
+      const data = result.data || result;
+      const status = data.status;
+
+      console.log('Atlas Poll:', status, 'Elapsed:', elapsed, 's');
+      $('#progressFill').style.width = '30%';
+      $('#progressFill').classList.add('indeterminate');
+
+      const statusMap = {
+        'processing': `正在生成... (${elapsed}s)`,
+        'queued': `排队中... (${elapsed}s)`,
+        'pending': `等待处理... (${elapsed}s)`,
+      };
+      if (statusMap[status]) $('#videoStatusText').textContent = statusMap[status];
+
+      if (status === 'completed' || status === 'succeeded') {
+        clearInterval(timer);
+        state.activeVideoTimer = null;
+        $('#progressFill').style.width = '100%';
+        $('#progressFill').classList.remove('indeterminate');
+        $('#videoStatusText').textContent = '✅ 生成完成!';
+        state.isGenerating = false;
+        renderGenerateBtn();
+
+        const outputs = data.outputs || [];
+        const videoUrl = outputs[0] || data.output || '';
+        if (videoUrl && videoUrl.startsWith('http')) {
+          state.results = [{
+            type: 'video', url: videoUrl, blobUrl: videoUrl,
+            prompt: state.prompt, timestamp: Date.now(),
+          }];
+          renderResults();
+          addToHistory(state.results);
+        } else {
+          state.lastError = { message: '视频生成完成但无法获取下载链接。响应: ' + JSON.stringify(result).slice(0, 500), code: 'NO_URL', type: 'video', timestamp: Date.now() };
+          showErrorDetail();
+          showToast('无法获取下载链接', 'error');
+        }
+      }
+
+      if (status === 'failed' || status === 'error') {
+        clearInterval(timer);
+        state.activeVideoTimer = null;
+        $('#videoStatusText').textContent = '❌ 失败';
+        const errMsg = data.error || data.message || '未知错误';
+        state.lastError = { message: typeof errMsg === 'object' ? JSON.stringify(errMsg) : String(errMsg), code: 'failed', type: 'video', timestamp: Date.now(), taskId: predictionId };
+        showErrorDetail();
+        showToast('Seedance 任务失败', 'error');
+        state.isGenerating = false;
+        renderGenerateBtn();
+        addTaskToHistory({ id: predictionId, prompt: state.prompt, type: state.mode, status: 'failed', error: errMsg, timestamp: Date.now() });
+      }
+    } catch(e) {
+      console.error('Atlas poll error:', e);
+    }
+  }, 5000);
+
+  state.activeVideoTimer = timer;
+  $('#btnCancelVideo').onclick = () => {
+    clearInterval(timer);
+    state.activeVideoTimer = null;
+    state.isGenerating = false;
+    renderGenerateBtn();
+    $('#videoProgressCard').classList.add('hidden');
+    addTaskToHistory({ id: predictionId, prompt: state.prompt, type: state.mode, status: 'cancelled', timestamp: Date.now() });
+    showToast('已取消任务', 'info');
+  };
+}
+
 async function createVideo() {
   if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
   if (state.mode === 'image-to-video' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
+
+  // Provider dispatch
+  if (state.videoProvider === 'atlascloud') {
+    if (!state.atlasCloudKey) { showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return; }
+    return createAtlasVideo();
+  }
 
   state.isGenerating = true;
   renderGenerateBtn();
@@ -1289,6 +1632,10 @@ function showErrorDetail() {
     hintText = '💡 网络连接问题，请在设置中切换代理模式';
   } else if (msg.includes('unable to generate') || msg.includes('content') || msg.includes('modify your prompt') || msg.includes('safety') || msg.includes('policy')) {
     hintText = '🛡️ 内容被安全策略拦截。请修改提示词，或更换输入图片后重试。图生图时输入图片本身也会经过内容审查';
+  } else if (msg.includes('replicate') || msg.includes('Replicate')) {
+    hintText = '💡 Replicate API 错误，请检查 API Key 是否有效，或访问 replicate.com 查看账户状态';
+  } else if (msg.includes('atlas') || msg.includes('Atlas') || msg.includes('atlascloud')) {
+    hintText = '💡 Atlas Cloud API 错误，请检查 API Key 是否有效，或访问 atlascloud.ai 查看账户状态';
   } else {
     hintText = '💡 请检查网络连接和 API Key 是否有效，或稍后重试';
   }
@@ -1483,6 +1830,27 @@ function updateModeUI() {
     ? (state.mode === 'image-to-image' ? '例如：把背景换成樱花树下的日本街道' : '例如：女孩微笑着看向镜头，头发被风吹动')
     : (state.mode === 'text-to-image' ? '例如：赛博朋克风格的城市夜景，霓虹灯闪烁...' : '例如：海边日落，海浪轻拍沙滩，海鸥飞过...');
   hideResults();
+  updateProviderIndicator();
+}
+
+function updateProviderIndicator() {
+  const el = $('#providerIndicator');
+  const isVideo = state.mode === 'text-to-video' || state.mode === 'image-to-video';
+  if (isVideo) {
+    if (state.videoProvider === 'atlascloud') {
+      el.textContent = '🎬 当前: Seedance 1.5 Pro Spicy (Atlas Cloud)';
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+  } else {
+    if (state.imageProvider === 'replicate') {
+      el.textContent = '🖼️ 当前: FLUX.1 Pro (Replicate)';
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+  }
 }
 
 // ─── Settings Page ─────────────────────────────────────────
@@ -1494,6 +1862,12 @@ function renderSettingsForm() {
   $('#defaultImageRatio').value = state.settings.imageRatio || '1:1';
   $('#defaultVideoResolution').value = state.settings.videoResolution;
   $('#defaultVideoDuration').value = String(state.settings.videoDuration);
+  $('#imageProvider').value = state.imageProvider;
+  $('#replicateKeyInput').value = state.replicateKey ? '••••••••••••••••••••' : '';
+  $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
+  $('#videoProvider').value = state.videoProvider;
+  $('#atlasCloudKeyInput').value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
+  $('#atlasCloudKeyGroup').style.display = state.videoProvider === 'atlascloud' ? 'block' : 'none';
   updateStatusDot();
 }
 
@@ -1511,15 +1885,35 @@ $('#toggleApiKeyVis').onclick = () => {
 };
 
 $('#saveApiKey').onclick = () => {
+  let saved = false;
   const val = $('#apiKeyInput').value.trim();
   if (val && val !== '••••••••••••••••••••') {
     state.apiKey = val;
-    saveState(state);
-    showToast('API Key 已保存', 'success');
-    updateStatusDot();
+    saved = true;
     $('#apiKeyInput').type = 'password';
     $('#apiKeyInput').value = '••••••••••••••••••••';
     $('#toggleApiKeyVis').textContent = '👁';
+  }
+  const rVal = $('#replicateKeyInput').value.trim();
+  if (rVal && rVal !== '••••••••••••••••••••') {
+    state.replicateKey = rVal;
+    saved = true;
+    $('#replicateKeyInput').type = 'password';
+    $('#replicateKeyInput').value = '••••••••••••••••••••';
+    $('#toggleReplicateKeyVis').textContent = '👁';
+  }
+  const aVal = $('#atlasCloudKeyInput').value.trim();
+  if (aVal && aVal !== '••••••••••••••••••••') {
+    state.atlasCloudKey = aVal;
+    saved = true;
+    $('#atlasCloudKeyInput').type = 'password';
+    $('#atlasCloudKeyInput').value = '••••••••••••••••••••';
+    $('#toggleAtlasCloudKeyVis').textContent = '👁';
+  }
+  if (saved) {
+    saveState(state);
+    showToast('API Key 已保存', 'success');
+    updateStatusDot();
   }
 };
 
@@ -1558,6 +1952,49 @@ $('#defaultImageRatio').onchange = () => { state.settings.imageRatio = $('#defau
 $('#defaultVideoResolution').onchange = () => { state.settings.videoResolution = $('#defaultVideoResolution').value; saveState(state); };
 $('#defaultVideoDuration').onchange = () => { state.settings.videoDuration = parseInt($('#defaultVideoDuration').value); saveState(state); };
 
+$('#imageProvider').onchange = () => {
+  state.imageProvider = $('#imageProvider').value;
+  $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
+  saveState(state);
+};
+$('#replicateKeyInput').onchange = () => {
+  state.replicateKey = $('#replicateKeyInput').value.trim();
+  saveState(state);
+};
+$('#toggleReplicateKeyVis').onclick = () => {
+  const inp = $('#replicateKeyInput');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    if (inp.value === '••••••••••••••••••••') inp.value = state.replicateKey;
+    $('#toggleReplicateKeyVis').textContent = '🙈';
+  } else {
+    inp.type = 'password';
+    inp.value = state.replicateKey ? '••••••••••••••••••••' : '';
+    $('#toggleReplicateKeyVis').textContent = '👁';
+  }
+};
+$('#videoProvider').onchange = () => {
+  state.videoProvider = $('#videoProvider').value;
+  $('#atlasCloudKeyGroup').style.display = state.videoProvider === 'atlascloud' ? 'block' : 'none';
+  saveState(state);
+};
+$('#atlasCloudKeyInput').onchange = () => {
+  state.atlasCloudKey = $('#atlasCloudKeyInput').value.trim();
+  saveState(state);
+};
+$('#toggleAtlasCloudKeyVis').onclick = () => {
+  const inp = $('#atlasCloudKeyInput');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    if (inp.value === '••••••••••••••••••••') inp.value = state.atlasCloudKey;
+    $('#toggleAtlasCloudKeyVis').textContent = '🙈';
+  } else {
+    inp.type = 'password';
+    inp.value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
+    $('#toggleAtlasCloudKeyVis').textContent = '👁';
+  }
+};
+
 $('#clearChatHistory').onclick = () => { if (confirm('确定清除所有对话记录？')) clearChatHistory(); };
 $('#clearHistory').onclick = () => {
   if (confirm('确定清除所有生成历史？')) {
@@ -1577,6 +2014,10 @@ $('#clearAll').onclick = () => {
     };
     state.proxyMode = 'auto';
     state.customProxyUrl = '';
+    state.imageProvider = 'agnes';
+    state.videoProvider = 'agnes';
+    state.replicateKey = '';
+    state.atlasCloudKey = '';
     renderSettingsForm();
     showToast('所有数据已清除', 'success');
   }
@@ -1605,8 +2046,17 @@ $('#settingsToggle').onclick = function() {
 
 // ─── Generate Button ────────────────────────────────────────
 $('#btnGenerate').onclick = () => {
-  if (!state.apiKey) { showToast('请先在设置中输入 API Key', 'error'); return; }
   const isVideo = state.mode === 'text-to-video' || state.mode === 'image-to-video';
+  // Check appropriate API key based on provider
+  if (!isVideo && state.imageProvider === 'replicate' && !state.replicateKey) {
+    showToast('请先在设置中输入 Replicate API Key', 'error'); return;
+  }
+  if (isVideo && state.videoProvider === 'atlascloud' && !state.atlasCloudKey) {
+    showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return;
+  }
+  if (!state.apiKey && ((!isVideo && state.imageProvider === 'agnes') || (isVideo && state.videoProvider === 'agnes'))) {
+    showToast('请先在设置中输入 API Key', 'error'); return;
+  }
   if (isVideo) createVideo();
   else generateImage();
 };

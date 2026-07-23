@@ -1,5 +1,5 @@
 // Agnes AI Studio - Service Worker
-const CACHE_NAME = 'agnes-studio-v19';
+const CACHE_NAME = 'agnes-studio-v20';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -37,6 +37,16 @@ self.addEventListener('fetch', (event) => {
 
   // Network-only for CORS proxy
   if (url.pathname.includes('proxy')) {
+    return;
+  }
+
+  // Network-only for Replicate API
+  if (url.hostname === 'api.replicate.com') {
+    return;
+  }
+
+  // Network-only for Atlas Cloud API
+  if (url.hostname === 'api.atlascloud.ai') {
     return;
   }
 
