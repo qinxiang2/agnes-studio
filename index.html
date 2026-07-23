@@ -627,7 +627,7 @@ const state = {
   imageFileName: null,
   settings: Object.assign({
     imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
-    videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
+    videoResolution: '720p', videoRatio: '16:9', videoDuration: 5, videoFps: 24, videoAudio: false,
     imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
   }, saved.settings || {}),
   proxyMode: saved.proxyMode || 'auto',
@@ -810,13 +810,26 @@ function calcNumFrames(duration, fps) {
   return Math.min(Math.max(n * 8 + 1, 1), 441);
 }
 
-function getVideoDimensions(resolution) {
-  // Map resolution label to width x height
-  const map = {
-    '720p':  { w: 1280, h: 720 },
-    '1080p': { w: 1920, h: 1080 },
+function getVideoDimensions(resolution, ratio) {
+  // 官方推荐: width 1152, height 768 (3:2)
+  // 支持 ratio: 16:9, 9:16, 1:1, 4:3, 3:4
+  // 720p 16:9 基准, 1080p 2K 基准
+  const base = resolution === '1080p'
+    ? { w: 1728, h: 1152 }  // 1080p 3:2 基准
+    : { w: 1152, h: 768 };  // 720p 3:2 基准（官方推荐）
+
+  const ratioMap = {
+    '16:9': { mulW: 1.0, mulH: 9.0/16 / (3.0/2) },
+    '9:16': { mulW: 9.0/16 / (3.0/2), mulH: 1.0 },
+    '1:1':  { mulW: 1.0 / (3.0/2), mulH: 1.0 },
+    '4:3':  { mulW: 4.0/3 / (3.0/2), mulH: 1.0 },
+    '3:4':  { mulW: 3.0/4 / (3.0/2), mulH: 1.0 },
   };
-  return map[resolution] || map['720p'];
+  const rm = ratioMap[ratio] || ratioMap['16:9'];
+  return {
+    w: Math.round(base.w * rm.mulW),
+    h: Math.round(base.h * rm.mulH),
+  };
 }
 
 async function createVideo() {
@@ -829,7 +842,7 @@ async function createVideo() {
 
   const s = state.settings;
   const numFrames = calcNumFrames(s.videoDuration, s.videoFps);
-  const dims = getVideoDimensions(s.videoResolution);
+  const dims = getVideoDimensions(s.videoResolution, s.videoRatio || '16:9');
 
   const payload = {
     model: s.videoModel,
@@ -1026,6 +1039,15 @@ function renderSettingsGrid() {
       </select></div>`;
   }
   if (isVideo) {
+    html += `<div class="form-group">
+      <label class="form-label">画面比例</label>
+      <select class="form-select setting-field" data-key="videoRatio">
+        <option value="16:9" ${s.videoRatio==='16:9'?'selected':''}>16:9 (横版)</option>
+        <option value="9:16" ${s.videoRatio==='9:16'?'selected':''}>9:16 (竖版)</option>
+        <option value="1:1" ${s.videoRatio==='1:1'?'selected':''}>1:1 (方形)</option>
+        <option value="4:3" ${s.videoRatio==='4:3'?'selected':''}>4:3 (传统)</option>
+        <option value="3:4" ${s.videoRatio==='3:4'?'selected':''}>3:4 (竖版)</option>
+      </select></div>`;
     html += `<div class="form-group">
       <label class="form-label">分辨率</label>
       <select class="form-select setting-field" data-key="videoResolution">
@@ -1469,7 +1491,7 @@ $('#clearAll').onclick = () => {
     state.apiKey = '';
     state.settings = {
       imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
-      videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
+      videoResolution: '720p', videoRatio: '16:9', videoDuration: 5, videoFps: 24, videoAudio: false,
       imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
     };
     state.proxyMode = 'auto';
