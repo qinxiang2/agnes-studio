@@ -811,25 +811,20 @@ function calcNumFrames(duration, fps) {
 }
 
 function getVideoDimensions(resolution, ratio) {
-  // 官方推荐: width 1152, height 768 (3:2)
-  // 支持 ratio: 16:9, 9:16, 1:1, 4:3, 3:4
-  // 720p 16:9 基准, 1080p 2K 基准
-  const base = resolution === '1080p'
-    ? { w: 1728, h: 1152 }  // 1080p 3:2 基准
-    : { w: 1152, h: 768 };  // 720p 3:2 基准（官方推荐）
+  // 以高度为基准，按比例计算宽度
+  // 720p → h=768（官方推荐默认高度）
+  // 1080p → h=1152
+  const h = resolution === '1080p' ? 1152 : 768;
 
   const ratioMap = {
-    '16:9': { mulW: 1.0, mulH: 9.0/16 / (3.0/2) },
-    '9:16': { mulW: 9.0/16 / (3.0/2), mulH: 1.0 },
-    '1:1':  { mulW: 1.0 / (3.0/2), mulH: 1.0 },
-    '4:3':  { mulW: 4.0/3 / (3.0/2), mulH: 1.0 },
-    '3:4':  { mulW: 3.0/4 / (3.0/2), mulH: 1.0 },
+    '16:9': (h * 16 / 9),
+    '9:16': (h * 9 / 16),
+    '1:1':  h,
+    '4:3':  (h * 4 / 3),
+    '3:4':  (h * 3 / 4),
   };
-  const rm = ratioMap[ratio] || ratioMap['16:9'];
-  return {
-    w: Math.round(base.w * rm.mulW),
-    h: Math.round(base.h * rm.mulH),
-  };
+  const w = Math.round(ratioMap[ratio] || ratioMap['16:9']);
+  return { w, h };
 }
 
 async function createVideo() {
