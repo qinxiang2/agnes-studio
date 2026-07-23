@@ -494,7 +494,8 @@ img,video{max-width:100%;display:block}
     <div class="settings-section-title">🌐 CORS 代理</div>
     <div class="form-group">
       <select class="form-select" id="proxyMode">
-        <option value="direct">直连（推荐）</option>
+        <option value="auto">自动（直连优先，CORS错误时走代理）</option>
+        <option value="direct">仅直连（无CORS限制时用）</option>
         <option value="proxy">仅代理</option>
       </select>
     </div>
@@ -623,7 +624,7 @@ const state = {
     videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
     imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
   }, saved.settings || {}),
-  proxyMode: saved.proxyMode || 'direct',
+  proxyMode: saved.proxyMode || 'auto',
   customProxyUrl: saved.customProxyUrl || '',
   isGenerating: false,
   results: [],
@@ -645,7 +646,6 @@ const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
 const AGNES_ROOT = 'https://apihub.agnes-ai.com';
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
-  'https://api.allorigins.win/raw?url=',
 ];
 
 async function callAgnes(endpoint, options = {}) {
@@ -685,39 +685,31 @@ async function callAgnes(endpoint, options = {}) {
 
   // Attempt 2: CORS proxy (only for network/CORS failures, not API errors)
   if (state.proxyMode !== 'direct') {
-    const proxyUrl = state.customProxyUrl || CORS_PROXIES[0];
-    for (const proxy of (state.customProxyUrl ? [proxyUrl] : CORS_PROXIES)) {
-      try {
-        const proxyFetchUrl = proxy + encodeURIComponent(url);
-        const proxyBody = method === 'POST' || method === 'PUT' ? JSON.stringify(body) : undefined;
-        const proxyHeaders = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        };
-        // For corsproxy.io, pass headers as query params
-        let finalUrl = proxyFetchUrl;
-        if (proxy.includes('corsproxy.io')) {
-          finalUrl = proxyFetchUrl;
-        }
-
-        const res = await fetch(finalUrl, {
-          method: 'POST',
-          headers: proxyHeaders,
-          body: JSON.stringify({
-            url: url,
-            method: method,
-            headers: headers,
-            body: body,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          return data.contents ? JSON.parse(data.contents) : data;
-        }
-      } catch(e) {
-        // Proxy also failed, continue to next proxy
-        lastError = e;
+    const proxyBase = state.customProxyUrl || CORS_PROXIES[0];
+    try {
+      // corsproxy.io: just prefix the target URL
+      const proxyUrl = proxyBase + encodeURIComponent(url);
+      const res = await fetch(proxyUrl, {
+        method: method,
+        headers: {
+          ...headers,
+          'x-corsproxy-requested-with': 'agnes-studio',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw { code: res.status, message: errBody, isApiError: true };
       }
+      const data = await res.json();
+      // corsproxy.io wraps response; try to unwrap
+      if (data.contents) {
+        try { return JSON.parse(data.contents); } catch(e) { return data; }
+      }
+      return data;
+    } catch(e) {
+      if (e.isApiError) throw e;
+      lastError = new Error(`代理请求失败: ${e.message || '未知错误'}`);
     }
   }
 
@@ -1451,7 +1443,7 @@ $('#clearAll').onclick = () => {
       videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
       imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
     };
-    state.proxyMode = 'direct';
+    state.proxyMode = 'auto';
     state.customProxyUrl = '';
     renderSettingsForm();
     showToast('所有数据已清除', 'success');
