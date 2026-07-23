@@ -1914,7 +1914,7 @@ function newConversation() {
 
 function switchConversation(id) {
   activeConvId = id;
-  saveConversations(convs);
+  saveConversations(conversations);
   renderChat();
   updateChatTitle();
   $('#chatHistoryModal').classList.remove('show');
