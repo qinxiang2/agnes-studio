@@ -328,6 +328,37 @@ img,video{max-width:100%;display:block}
   background:rgba(255,255,255,0.2);border:none;color:#fff;font-size:22px;
 }
 
+/* ═══════════════════════════════════════════ Chat ═══════════════════════════════════════════ */
+#pageChat{display:flex;flex-direction:column;height:calc(100vh - 140px);height:calc(100dvh - 140px);padding-bottom:0}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 0;display:flex;flex-direction:column;gap:10px}
+.chat-welcome{text-align:center;padding:30px 10px}
+.chat-welcome-icon{font-size:48px;margin-bottom:10px}
+.chat-welcome h3{font-size:17px;margin-bottom:6px;color:var(--text)}
+.chat-welcome p{font-size:14px;color:var(--text-muted);margin-bottom:16px}
+.chat-suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.chat-suggestion{font-size:13px;padding:8px 14px;border-radius:18px;border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);white-space:nowrap;transition:all 0.2s}
+.chat-suggestion:active{background:var(--accent);border-color:var(--accent);color:#fff}
+.chat-msg{display:flex;gap:8px;padding:0 12px;animation:fadeIn 0.3s ease}
+.chat-msg.user{flex-direction:row-reverse}
+.chat-msg-avatar{width:32px;height:32px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.chat-msg.user .chat-msg-avatar{background:var(--accent)}
+.chat-msg-bubble{max-width:80%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.55;word-break:break-word}
+.chat-msg.assistant .chat-msg-bubble{background:var(--card);color:var(--text);border-bottom-left-radius:4px}
+.chat-msg.user .chat-msg-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.chat-msg-bubble .prompt-block{display:block;background:rgba(0,0,0,0.3);padding:10px 12px;border-radius:8px;margin:8px 0;font-style:italic;border-left:3px solid var(--accent-light)}
+.chat-use-btn{display:inline-block;margin-top:6px;padding:5px 12px;border-radius:14px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;border:none}
+.chat-typing{display:none;padding:8px 16px;gap:4px;align-items:center}
+.chat-typing.show{display:flex}
+.chat-typing span{width:7px;height:7px;border-radius:50%;background:var(--text-muted);animation:typingBounce 1.4s ease-in-out infinite}
+.chat-typing span:nth-child(2){animation-delay:0.2s}
+.chat-typing span:nth-child(3){animation-delay:0.4s}
+@keyframes typingBounce{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}
+.chat-input-area{display:flex;gap:8px;padding:10px 12px;background:var(--surface);border-top:1px solid var(--border);position:sticky;bottom:0}
+.chat-input{flex:1;padding:10px 14px;border-radius:20px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;outline:none}
+.chat-input:focus{border-color:var(--accent)}
+.chat-send-btn{width:40px;height:40px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:18px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.chat-send-btn:disabled{opacity:0.4}
+
 /* ═══════════════════════════════════════════ Utility ═══════════════════════════════════════════ */
 .hidden{display:none !important}
 .mt-8{margin-top:8px}
@@ -548,6 +579,7 @@ img,video{max-width:100%;display:block}
 
   <div class="settings-section">
     <div class="settings-section-title">💾 数据管理</div>
+    <button class="btn-secondary" id="clearChatHistory" style="width:100%;margin-bottom:8px">清除对话记录</button>
     <button class="btn-secondary" id="clearHistory" style="width:100%;margin-bottom:8px">清除生成历史</button>
     <button class="btn-secondary" id="clearAll" style="width:100%;color:var(--error);border-color:var(--error)">清除所有数据</button>
   </div>
@@ -558,6 +590,27 @@ img,video{max-width:100%;display:block}
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════ Page: Chat ═══════════════════════════════════════ -->
+<div class="page" id="pageChat">
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-welcome">
+      <div class="chat-welcome-icon">💬</div>
+      <h3>AI 提示词助手</h3>
+      <p>我可以帮你生成图片和视频的提示词</p>
+      <div class="chat-suggestions">
+        <button class="chat-suggestion" data-prompt="帮我写一个生成赛博朋克城市夜景的图片提示词">🌃 赛博朋克城市</button>
+        <button class="chat-suggestion" data-prompt="帮我写一个女孩在海边微笑的视频提示词，要有镜头运动">🌊 海边人物视频</button>
+        <button class="chat-suggestion" data-prompt="帮我写一个产品展示视频的提示词，要突出产品质感">📦 产品展示视频</button>
+        <button class="chat-suggestion" data-prompt="帮我优化这段提示词：一个女孩在花园里">✏️ 优化提示词</button>
+      </div>
+    </div>
+  </div>
+  <div class="chat-input-area">
+    <input type="text" class="chat-input" id="chatInput" placeholder="描述你想要生成的画面...">
+    <button class="chat-send-btn" id="chatSendBtn">➤</button>
+  </div>
+</div>
+
 <!-- Bottom Navigation -->
 <nav class="bottom-nav">
   <button class="nav-item active" data-page="pageGenerate">
@@ -565,6 +618,9 @@ img,video{max-width:100%;display:block}
   </button>
   <button class="nav-item" data-page="pageTasks">
     <span class="nav-icon">📋</span>任务
+  </button>
+  <button class="nav-item" data-page="pageChat">
+    <span class="nav-icon">💬</span>助手
   </button>
   <button class="nav-item" data-page="pageSettings">
     <span class="nav-icon">⚙️</span>设置
@@ -1372,6 +1428,7 @@ $$('.nav-item').forEach(btn => {
     $$('.page').forEach(p => p.classList.remove('active'));
     $(`#${pageId}`).classList.add('active');
     if (pageId === 'pageTasks') renderTaskPage();
+    if (pageId === 'pageChat') renderChat();
     if (pageId === 'pageSettings') renderSettingsForm();
   };
 });
@@ -1473,6 +1530,7 @@ $('#defaultImageRatio').onchange = () => { state.settings.imageRatio = $('#defau
 $('#defaultVideoResolution').onchange = () => { state.settings.videoResolution = $('#defaultVideoResolution').value; saveState(state); };
 $('#defaultVideoDuration').onchange = () => { state.settings.videoDuration = parseInt($('#defaultVideoDuration').value); saveState(state); };
 
+$('#clearChatHistory').onclick = () => { if (confirm('确定清除所有对话记录？')) clearChatHistory(); };
 $('#clearHistory').onclick = () => {
   if (confirm('确定清除所有生成历史？')) {
     localStorage.removeItem(TASK_HISTORY_KEY);
@@ -1707,13 +1765,171 @@ if ('serviceWorker' in navigator) {
   }).catch(() => {});
 }
 
+// ─── Chat (Agnes 2.0 Flash) ─────────────────────────────────
+const CHAT_STORAGE = 'agnes_studio_chat';
+const CHAT_SYSTEM_PROMPT = `你是 AI 提示词工程专家，专门帮助用户生成高质量的 AI 图片和视频提示词。
+
+## 核心能力
+- 根据用户需求生成图片或视频生成提示词
+- 优化用户提供的提示词
+- 推荐合适的镜头运动和构图
+
+## 视频提示词结构（重要！）
+视频提示词 = 主体 + 动作 + 镜头运动 + 细节变化 + 氛围
+
+示例：
+"一个穿深色夹克的年轻人站在老旧路口，镜头从墙上的旧车票特写缓缓后拉，露出90年代复古街道，暖色调，空气中细微尘埃，电影感。"
+
+## 50种镜头类型参考：
+1. 推镜：镜头从远景缓缓向前推进，主体由小变大，背景逐渐虚化
+2. 低角度推镜：镜头从地面高度向前推进，前景掠过地面纹理，主体由远及近浮现
+3. 前景推镜：镜头穿过后景向前移动，前景虚化划过画面，后景逐渐清晰
+4. 侧向平移：镜头平行于主体缓缓平移，保持主体在画面一侧，背景连续变化
+5. 平移加细节：镜头沿主体平移并推进到细节处，最终停留在一个关键元素上
+6. 特写拉远：镜头从一个细节特写开始，缓缓后拉，逐渐展现完整场景
+7. 人物拉远升高：镜头从人物背后拉远并升高，人物变小，周围空间展开
+8. 从窗户向外拉：镜头从窗边开始后拉，窗外风景进入画面，室内环境渐显
+9. 俯视拉远升起：镜头从俯视角度拉远并升起，逐渐变成俯瞰全景
+10. 高角度拉远：镜头从上方后拉，展现地面全貌，空间纵深感极强
+（更多镜头类型在完整知识库中）
+
+## 环绕类镜头
+11. 半环绕：镜头围绕主体缓缓移动半圈，主体保持在画面中心，背景自然变化
+12. 从背后绕到正面：镜头从主体背后绕到正面，面部表情逐渐展现
+13. 产品旋转：镜头围绕产品缓慢旋转，材质光泽和细节稳定可见
+14. 建筑环绕：镜头围绕建筑缓缓移动，建筑结构展现，光影在墙面上变化
+15. 人物定位环绕：人物保持轻微动作，镜头围绕人物缓慢移动，服装和发型自然飘动
+
+## 核心原则
+- AI视频不识字，只识别画面 — 写画面，不要写文字
+- 一个视频只用一个镜头 — 不要贪多
+- 先学会一个镜头，换主体、换场景，练到熟练
+- 镜头运动要明确：推、拉、摇、移、跟、升降、环绕
+
+## 输出格式
+当你生成提示词时，请用代码块包裹提示词，并在前面标注是图片提示词还是视频提示词。
+同时给出简短的说明（为什么这样写）。`;
+
+function loadChatHistory() {
+  try { return JSON.parse(localStorage.getItem(CHAT_STORAGE) || '[]'); } catch(e) { return []; }
+}
+function saveChatHistory(msgs) { localStorage.setItem(CHAT_STORAGE, JSON.stringify(msgs.slice(-50))); }
+let chatMessages = loadChatHistory();
+let isChatting = false;
+
+function renderChat() {
+  const el = $('#chatMessages');
+  if (chatMessages.length === 0) {
+    el.innerHTML = `<div class="chat-welcome">
+      <div class="chat-welcome-icon">💬</div>
+      <h3>AI 提示词助手</h3>
+      <p>我可以帮你生成图片和视频的提示词</p>
+      <div class="chat-suggestions">
+        <button class="chat-suggestion" data-prompt="帮我写一个生成赛博朋克城市夜景的图片提示词">🌃 赛博朋克城市</button>
+        <button class="chat-suggestion" data-prompt="帮我写一个女孩在海边微笑的视频提示词，要有镜头运动">🌊 海边人物视频</button>
+        <button class="chat-suggestion" data-prompt="帮我写一个产品展示视频的提示词，要突出产品质感">📦 产品展示视频</button>
+        <button class="chat-suggestion" data-prompt="帮我优化这段提示词：一个女孩在花园里">✏️ 优化提示词</button>
+      </div></div>`;
+  } else {
+    el.innerHTML = chatMessages.map(m => {
+      const isUser = m.role === 'user';
+      let content = escapeHtml(m.content);
+      // Extract code blocks (prompts) and add "use" button
+      content = content.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+        const cleanCode = code.trim();
+        return `<span class="prompt-block">${escapeHtml(cleanCode)}<button class="chat-use-btn" data-prompt="${escapeHtml(cleanCode).replace(/"/g,'&quot;')}">📋 使用此提示词</button></span>`;
+      });
+      return `<div class="chat-msg ${isUser ? 'user' : 'assistant'}">
+        <div class="chat-msg-avatar">${isUser ? '👤' : '🤖'}</div>
+        <div class="chat-msg-bubble">${content}</div>
+      </div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+  // Bind suggestion buttons
+  el.querySelectorAll('.chat-suggestion').forEach(btn => {
+    btn.onclick = () => sendChatMessage(btn.dataset.prompt);
+  });
+  // Bind "use prompt" buttons
+  el.querySelectorAll('.chat-use-btn').forEach(btn => {
+    btn.onclick = () => {
+      const prompt = btn.dataset.prompt;
+      // Navigate to generate tab and fill prompt
+      state.prompt = prompt;
+      $('#promptInput').value = prompt;
+      // Switch to generate page
+      $$('.nav-item').forEach(b => b.classList.remove('active'));
+      const genBtn = document.querySelector('[data-page="pageGenerate"]');
+      if (genBtn) genBtn.classList.add('active');
+      $$('.page').forEach(p => p.classList.remove('active'));
+      $('#pageGenerate').classList.add('active');
+      showToast('提示词已填入，选择模式后点击生成', 'success');
+    };
+  });
+}
+
+async function sendChatMessage(text) {
+  if (!state.apiKey) { showToast('请先在设置中输入 API Key', 'error'); return; }
+  if (isChatting) return;
+  const input = text || $('#chatInput').value.trim();
+  if (!input) return;
+
+  isChatting = true;
+  $('#chatInput').value = '';
+  $('#chatSendBtn').disabled = true;
+  chatMessages.push({ role: 'user', content: input });
+  saveChatHistory(chatMessages);
+  renderChat();
+  // Show typing indicator
+  const typingEl = document.createElement('div');
+  typingEl.className = 'chat-typing show';
+  typingEl.innerHTML = '<span></span><span></span><span></span>';
+  $('#chatMessages').appendChild(typingEl);
+  $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
+
+  try {
+    const msgs = [
+      { role: 'system', content: CHAT_SYSTEM_PROMPT },
+      ...chatMessages.map(m => ({ role: m.role, content: m.content })),
+    ];
+    const result = await callAgnes('/chat/completions', {
+      method: 'POST',
+      body: { model: 'agnes-2.0-flash', messages: msgs, temperature: 0.7, max_tokens: 2048 },
+    });
+    const reply = result.choices?.[0]?.message?.content || '（未收到回复）';
+    chatMessages.push({ role: 'assistant', content: reply });
+    saveChatHistory(chatMessages);
+  } catch(e) {
+    chatMessages.push({ role: 'assistant', content: `❌ 请求失败: ${e.message || e}` });
+    saveChatHistory(chatMessages);
+  } finally {
+    typingEl.remove();
+    isChatting = false;
+    $('#chatSendBtn').disabled = false;
+    renderChat();
+    $('#chatInput').focus();
+  }
+}
+
+// Chat input handlers
+$('#chatSendBtn').onclick = () => sendChatMessage();
+$('#chatInput').onkeydown = (e) => { if (e.key === 'Enter') sendChatMessage(); };
+
+// Clear chat
+function clearChatHistory() {
+  chatMessages = [];
+  saveChatHistory(chatMessages);
+  renderChat();
+  showToast('对话已清除', 'success');
+}
+
 // ─── Init ───────────────────────────────────────────────────
 function init() {
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
   updateStatusDot();
-  // Restore prompt from state if any
+  renderChat();
   $('#promptInput').value = state.prompt || '';
   $('#promptInput').oninput = () => { state.prompt = $('#promptInput').value; };
 }
