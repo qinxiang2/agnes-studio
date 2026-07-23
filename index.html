@@ -652,6 +652,8 @@ const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
 const AGNES_ROOT = 'https://apihub.agnes-ai.com';
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
+  'https://api.cors.lol/?url=',
+  'https://cors-anywhere.herokuapp.com/',
 ];
 
 async function callAgnes(endpoint, options = {}) {
@@ -691,31 +693,40 @@ async function callAgnes(endpoint, options = {}) {
 
   // Attempt 2: CORS proxy (only for network/CORS failures, not API errors)
   if (state.proxyMode !== 'direct') {
-    const proxyBase = state.customProxyUrl || CORS_PROXIES[0];
-    try {
-      // corsproxy.io: just prefix the target URL
-      const proxyUrl = proxyBase + encodeURIComponent(url);
-      const res = await fetch(proxyUrl, {
-        method: method,
-        headers: {
-          ...headers,
-          'x-corsproxy-requested-with': 'agnes-studio',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      if (!res.ok) {
-        const errBody = await res.text();
-        throw { code: res.status, message: errBody, isApiError: true };
+    const proxies = state.customProxyUrl ? [state.customProxyUrl] : CORS_PROXIES;
+    for (const proxyBase of proxies) {
+      try {
+        const proxyUrl = proxyBase + encodeURIComponent(url);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+
+        const res = await fetch(proxyUrl, {
+          method: method,
+          headers: { ...headers, 'x-requested-with': 'agnes-studio' },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw { code: res.status, message: errBody, isApiError: true };
+        }
+        const data = await res.json();
+        // Unwrap proxy response if wrapped
+        if (data.contents) {
+          try { return JSON.parse(data.contents); } catch(e) { return data; }
+        }
+        return data;
+      } catch(e) {
+        if (e.isApiError) throw e;
+        if (e.name === 'AbortError') {
+          lastError = new Error(`代理 ${proxyBase.slice(0,35)}... 请求超时`);
+        } else {
+          lastError = e;
+        }
+        // Continue to next proxy
       }
-      const data = await res.json();
-      // corsproxy.io wraps response; try to unwrap
-      if (data.contents) {
-        try { return JSON.parse(data.contents); } catch(e) { return data; }
-      }
-      return data;
-    } catch(e) {
-      if (e.isApiError) throw e;
-      lastError = new Error(`代理请求失败: ${e.message || '未知错误'}`);
     }
   }
 
