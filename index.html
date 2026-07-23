@@ -1882,7 +1882,14 @@ const CHAT_SYSTEM_PROMPT = `你是 AI 提示词工程专家，专门帮助用户
 6. 所有输出（包括提示词内容）默认全部使用中文，除非用户明确说用英文`;
 
 function loadConversations() {
-  try { return JSON.parse(localStorage.getItem(CHAT_STORAGE) || '[]'); } catch(e) { return []; }
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE);
+    if (!raw || raw === 'undefined' || raw === 'null') return [];
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return [];
+    // 过滤掉损坏的记录和无消息的空对话
+    return data.filter(c => c && c.id && Array.isArray(c.messages));
+  } catch(e) { return []; }
 }
 function saveConversations(convs) { localStorage.setItem(CHAT_STORAGE, JSON.stringify(convs)); }
 
@@ -1898,8 +1905,10 @@ function newConversation() {
   const conv = { id: genId(), title: '新对话', messages: [], createdAt: Date.now() };
   conversations.unshift(conv);
   activeConvId = conv.id;
-  saveConversations(convs);
-  renderChat();
+  saveConversations(conversations);
+  // 强制清空消息区，显示欢迎页
+  $('#chatMessages').querySelectorAll('.chat-msg, .chat-typing').forEach(m => m.remove());
+  $('#chatWelcome').style.display = 'block';
   updateChatTitle();
 }
 
@@ -1947,12 +1956,13 @@ function renderChat() {
   const el = $('#chatMessages');
   const welcome = $('#chatWelcome');
 
+  // 先把旧的聊天消息全都清掉，只保留欢迎区
+  el.querySelectorAll('.chat-msg, .chat-typing').forEach(m => m.remove());
+
   if (!conv || conv.messages.length === 0) {
     welcome.style.display = 'block';
-    el.querySelectorAll('.chat-msg').forEach(m => m.remove());
   } else {
     welcome.style.display = 'none';
-    el.querySelectorAll('.chat-msg').forEach(m => m.remove());
 
     conv.messages.forEach(m => {
       const isUser = m.role === 'user';
