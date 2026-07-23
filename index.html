@@ -867,14 +867,36 @@ async function callAgnes(endpoint, options = {}) {
 
 // ─── Replicate API (FLUX images) ──────────────────────────
 async function callReplicate(payload) {
-  const url = 'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions';
+  const targetUrl = 'https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions';
   const headers = {
     'Authorization': `Bearer ${state.replicateKey}`,
     'Content-Type': 'application/json',
     'Prefer': 'wait',
   };
+  const body = JSON.stringify({ input: payload });
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ input: payload }) });
+  // Try direct first
+  try {
+    const res = await fetch(targetUrl, { method: 'POST', headers, body });
+    if (!res.ok) {
+      const errBody = await res.text();
+      let errMsg = errBody;
+      try { errMsg = JSON.parse(errBody); } catch(e) {}
+      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
+      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+    }
+    return await res.json();
+  } catch(e) {
+    if (e.isApiError || (e.code && e.code >= 400)) throw e;
+  }
+
+  // Fallback: Cloudflare Worker proxy
+  const proxyUrl = AGNES_PROXY + encodeURIComponent(targetUrl);
+  const res = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { ...headers, 'x-requested-with': 'agnes-studio' },
+    body,
+  });
   if (!res.ok) {
     const errBody = await res.text();
     let errMsg = errBody;
@@ -882,26 +904,50 @@ async function callReplicate(payload) {
     const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
     throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
   }
-  return await res.json();
+  const data = await res.json();
+  if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+  return data;
 }
 
 // ─── Atlas Cloud API (Seedance videos) ─────────────────────
 async function callAtlasSubmit(payload) {
-  const url = 'https://api.atlascloud.ai/api/v1/model/generateVideo';
+  const targetUrl = 'https://api.atlascloud.ai/api/v1/model/generateVideo';
   const headers = {
     'Authorization': `Bearer ${state.atlasCloudKey}`,
     'Content-Type': 'application/json',
   };
+  const body = JSON.stringify(payload);
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+  try {
+    const res = await fetch(targetUrl, { method: 'POST', headers, body });
+    if (!res.ok) {
+      const errBody = await res.text();
+      let errMsg = errBody;
+      try { errMsg = JSON.parse(errBody); } catch(e) {}
+      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
+      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+    }
+    return await res.json();
+  } catch(e) {
+    if (e.isApiError || (e.code && e.code >= 400)) throw e;
+  }
+
+  // Fallback: Cloudflare Worker proxy
+  const proxyUrl = AGNES_PROXY + encodeURIComponent(targetUrl);
+  const res = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { ...headers, 'x-requested-with': 'agnes-studio' },
+    body,
+  });
   if (!res.ok) {
     const errBody = await res.text();
-    let errMsg = errBody;
     try { errMsg = JSON.parse(errBody); } catch(e) {}
     const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
     throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
   }
-  return await res.json();
+  const data = await res.json();
+  if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+  return data;
 }
 
 async function callAtlasPoll(predictionId) {
