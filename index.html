@@ -494,8 +494,7 @@ img,video{max-width:100%;display:block}
     <div class="settings-section-title">🌐 CORS 代理</div>
     <div class="form-group">
       <select class="form-select" id="proxyMode">
-        <option value="auto">自动（先直连，失败则代理）</option>
-        <option value="direct">仅直连</option>
+        <option value="direct">直连（推荐）</option>
         <option value="proxy">仅代理</option>
       </select>
     </div>
@@ -624,7 +623,7 @@ const state = {
     videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
     imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
   }, saved.settings || {}),
-  proxyMode: saved.proxyMode || 'auto',
+  proxyMode: saved.proxyMode || 'direct',
   customProxyUrl: saved.customProxyUrl || '',
   isGenerating: false,
   results: [],
@@ -660,8 +659,8 @@ async function callAgnes(endpoint, options = {}) {
   const fetchOpts = { method, headers };
   if (body) fetchOpts.body = JSON.stringify(body);
 
-  // Strategy: direct first, then CORS proxy
-  const errors = [];
+  // Strategy: direct first, only try proxy on real CORS/network errors
+  let lastError = null;
 
   // Attempt 1: Direct
   if (state.proxyMode !== 'proxy') {
@@ -671,16 +670,20 @@ async function callAgnes(endpoint, options = {}) {
         const errBody = await res.text();
         let errMsg = errBody;
         try { errMsg = JSON.parse(errBody); } catch(e) {}
-        throw { code: res.status, message: typeof errMsg === 'object' ? (errMsg.error?.message || errMsg.message || JSON.stringify(errMsg)) : errMsg };
+        const msg = typeof errMsg === 'object' ? (errMsg.error?.message || errMsg.message || JSON.stringify(errMsg)) : errMsg;
+        // All HTTP errors from the API are real responses — don't retry via proxy
+        throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
       }
       return await res.json();
     } catch(e) {
-      if (e.code === 400 || e.code === 401 || e.code === 403 || e.code === 429 || e.code === 500) throw e;
-      errors.push(`直连失败: ${e.message || e}`);
+      // Real API errors (any HTTP status code): throw immediately, don't proxy
+      if (e.isApiError || (e.code && e.code >= 400)) throw e;
+      // Network/CORS errors only: record and try proxy
+      lastError = e;
     }
   }
 
-  // Attempt 2: CORS proxy
+  // Attempt 2: CORS proxy (only for network/CORS failures, not API errors)
   if (state.proxyMode !== 'direct') {
     const proxyUrl = state.customProxyUrl || CORS_PROXIES[0];
     for (const proxy of (state.customProxyUrl ? [proxyUrl] : CORS_PROXIES)) {
@@ -712,12 +715,15 @@ async function callAgnes(endpoint, options = {}) {
           return data.contents ? JSON.parse(data.contents) : data;
         }
       } catch(e) {
-        errors.push(`代理失败(${proxy.slice(0,30)}...): ${e.message}`);
+        // Proxy also failed, continue to next proxy
+        lastError = e;
       }
     }
   }
 
-  throw new Error(errors.join(' | ') || '网络请求失败，请检查网络连接');
+  // If we got here, both direct and proxy failed with network errors
+  if (lastError) throw lastError;
+  throw new Error('网络请求失败，请检查网络连接。如频繁出现，请确认 API 地址可访问');
 }
 
 // ─── Image Generation ──────────────────────────────────────
@@ -1143,7 +1149,9 @@ function showErrorDetail() {
   // Suggestions based on error type
   let hintText = '';
   const msg = (err.message || '').toLowerCase();
-  if (msg.includes('400') || msg.includes('invalid')) {
+  if (msg.includes('503') || msg.includes('service') || msg.includes('busy')) {
+    hintText = '💡 服务端繁忙，请稍等片刻后重试（点击生成按钮重新发起）';
+  } else if (msg.includes('400') || msg.includes('invalid')) {
     hintText = '💡 可能是请求参数有误，请检查图片格式或Prompt内容';
   } else if (msg.includes('401') || msg.includes('auth')) {
     hintText = '💡 API Key 无效或已过期，请在设置中更新';
@@ -1443,7 +1451,7 @@ $('#clearAll').onclick = () => {
       videoResolution: '720p', videoDuration: 5, videoFps: 24, videoAudio: false,
       imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
     };
-    state.proxyMode = 'auto';
+    state.proxyMode = 'direct';
     state.customProxyUrl = '';
     renderSettingsForm();
     showToast('所有数据已清除', 'success');
