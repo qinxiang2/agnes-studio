@@ -438,6 +438,7 @@ img,video{max-width:100%;display:block}
     </div>
     <div class="error-detail-body" id="errorDetailBody"></div>
     <div class="error-detail-hint" id="errorDetailHint"></div>
+    <button class="btn-generate mt-8" id="btnErrorRetry" style="font-size:14px;padding:10px">🔄 重新生成</button>
   </div>
 
   <!-- Results -->
@@ -1152,7 +1153,15 @@ function showErrorDetail() {
   title.textContent = titleText;
   code.textContent = err.code ? `错误码: ${err.code}` : '';
   code.style.display = err.code ? 'inline' : 'none';
-  body.textContent = err.message || '未知错误';
+
+  // 清理服务端错误信息，提取可读部分
+  let cleanMsg = err.message || '未知错误';
+  if (err.code === 503) {
+    const detailMatch = cleanMsg.match(/'detail':\s*'([^']+)'/);
+    if (detailMatch) cleanMsg = `服务繁忙：${detailMatch[1]}`;
+    else cleanMsg = '服务端当前负载较高，请稍后重试';
+  }
+  body.textContent = cleanMsg;
 
   // Suggestions based on error type
   let hintText = '';
@@ -1495,8 +1504,12 @@ $('#btnGenerate').onclick = () => {
   else generateImage();
 };
 
-// ─── Error detail close ─────────────────────────────────────
+// ─── Error detail close & retry ─────────────────────────────
 $('#errorDetailClose').onclick = () => hideErrorDetail();
+$('#btnErrorRetry').onclick = () => {
+  hideErrorDetail();
+  $('#btnGenerate').click();
+};
 
 // ─── Task deletion ─────────────────────────────────────────
 let taskSelectMode = false;
