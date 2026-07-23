@@ -512,6 +512,8 @@ img,video{max-width:100%;display:block}
       <select class="form-select" id="defaultImageSize">
         <option value="1K">1K (~1024px)</option>
         <option value="2K">2K (~2048px)</option>
+        <option value="3K">3K (~3072px)</option>
+        <option value="4K">4K (~4096px)</option>
       </select>
     </div>
     <div class="form-group">
@@ -522,6 +524,9 @@ img,video{max-width:100%;display:block}
         <option value="3:4">3:4 (竖版)</option>
         <option value="16:9">16:9 (宽屏)</option>
         <option value="9:16">9:16 (竖长)</option>
+        <option value="2:3">2:3 (竖版)</option>
+        <option value="3:2">3:2 (横版)</option>
+        <option value="21:9">21:9 (超宽)</option>
       </select>
     </div>
     <div class="form-group">
@@ -732,36 +737,42 @@ async function generateImage() {
   const payload = {
     model: s.imageModel,
     prompt: state.prompt,
-    size: s.imageSize,       // "1K" or "2K"
-    ratio: s.imageRatio,     // "1:1", "4:3", "3:4", "16:9", "9:16"
+    size: s.imageSize,       // "1K" / "2K" / "3K" / "4K"
+    ratio: s.imageRatio,     // "1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"
+    extra_body: {
+      response_format: 'url',  // 文生图 URL 输出 — 必须放在 extra_body 内部
+    },
   };
   if (s.imageCount > 1) payload.n = s.imageCount;
   if (s.imageQuality && s.imageQuality !== 'standard') payload.quality = s.imageQuality;
   if (s.imageStyle) payload.style = s.imageStyle;
 
-  // 图生图: 在 extra_body.image 中传入图片数组，response_format 仅在 extra_body 内部
+  // 图生图: 在 extra_body.image 中传入图片数组
   if (state.mode === 'image-to-image' && state.imageBase64) {
     const dataUri = `data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`;
-    payload.extra_body = { image: [dataUri], response_format: 'url' };
+    payload.extra_body.image = [dataUri];
   }
 
   try {
     const result = await callAgnes('/images/generations', { method: 'POST', body: payload });
     const data = result.data || [];
     state.results = data.map((item, i) => {
-      let blobUrl = null, blobData = null;
+      // URL 输出（extra_body.response_format: "url"）
+      const imageUrl = item.url || '';
+      // Base64 输出作为备选
+      let blobUrl = null;
       if (item.b64_json) {
         const byteStr = atob(item.b64_json);
         const bytes = new Uint8Array(byteStr.length);
         for (let j = 0; j < byteStr.length; j++) bytes[j] = byteStr.charCodeAt(j);
-        blobData = new Blob([bytes], { type: 'image/png' });
+        const blobData = new Blob([bytes], { type: 'image/png' });
         blobUrl = URL.createObjectURL(blobData);
       }
       return {
         type: 'image',
-        blobUrl: blobUrl || item.url,
-        blob: blobData,
-        url: item.url || '',
+        url: imageUrl,
+        blobUrl: blobUrl || imageUrl,
+        blob: null,
         index: i,
         prompt: state.prompt,
         timestamp: Date.now(),
@@ -988,6 +999,8 @@ function renderSettingsGrid() {
       <select class="form-select setting-field" data-key="imageSize">
         <option value="1K" ${s.imageSize==='1K'?'selected':''}>1K (~1024px)</option>
         <option value="2K" ${s.imageSize==='2K'?'selected':''}>2K (~2048px)</option>
+        <option value="3K" ${s.imageSize==='3K'?'selected':''}>3K (~3072px)</option>
+        <option value="4K" ${s.imageSize==='4K'?'selected':''}>4K (~4096px)</option>
       </select></div>`;
     html += `<div class="form-group">
       <label class="form-label">画面比例</label>
@@ -997,6 +1010,9 @@ function renderSettingsGrid() {
         <option value="3:4" ${s.imageRatio==='3:4'?'selected':''}>3:4 (竖版)</option>
         <option value="16:9" ${s.imageRatio==='16:9'?'selected':''}>16:9 (宽屏)</option>
         <option value="9:16" ${s.imageRatio==='9:16'?'selected':''}>9:16 (竖长)</option>
+        <option value="2:3" ${s.imageRatio==='2:3'?'selected':''}>2:3 (竖版)</option>
+        <option value="3:2" ${s.imageRatio==='3:2'?'selected':''}>3:2 (横版)</option>
+        <option value="21:9" ${s.imageRatio==='21:9'?'selected':''}>21:9 (超宽)</option>
       </select></div>`;
     html += `<div class="form-group">
       <label class="form-label">质量</label>
