@@ -1611,6 +1611,8 @@ function showErrorDetail() {
     hintText = '💡 可能是请求参数有误，请检查图片格式或Prompt内容';
   } else if (err.code === 401 || msg.includes('auth')) {
     hintText = '💡 API Key 无效或已过期，请在设置中更新';
+  } else if (err.code === 402 || msg.includes('insufficient balance') || msg.includes('balance')) {
+    hintText = '💰 账户余额不足，请前往对应供应商网站充值';
   } else if (err.code === 403) {
     hintText = '💡 无权限访问，请检查 API Key 是否有对应模型的权限';
   } else if (err.code === 429 || msg.includes('rate')) {
