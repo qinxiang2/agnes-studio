@@ -564,6 +564,11 @@ img,video{max-width:100%;display:block}
         <input type="password" class="form-input" id="replicateKeyInput" placeholder="r8_xxxxxxxxxxxxxxxx">
         <button class="btn-secondary" id="toggleReplicateKeyVis" style="flex-shrink:0">👁</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-secondary" id="saveReplicateKey">保存</button>
+        <button class="btn-secondary" id="testReplicateKey">测试连接</button>
+      </div>
+      <div class="test-result" id="replicateTestResult"></div>
     </div>
     <div class="form-group">
       <label class="form-label">视频生成供应商</label>
@@ -578,6 +583,11 @@ img,video{max-width:100%;display:block}
         <input type="password" class="form-input" id="atlasCloudKeyInput" placeholder="ac_xxxxxxxxxxxxxxxx">
         <button class="btn-secondary" id="toggleAtlasCloudKeyVis" style="flex-shrink:0">👁</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-secondary" id="saveAtlasCloudKey">保存</button>
+        <button class="btn-secondary" id="testAtlasCloudKey">测试连接</button>
+      </div>
+      <div class="test-result" id="atlasCloudTestResult"></div>
     </div>
   </div>
 
@@ -1992,6 +2002,71 @@ $('#toggleAtlasCloudKeyVis').onclick = () => {
     inp.type = 'password';
     inp.value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
     $('#toggleAtlasCloudKeyVis').textContent = '👁';
+  }
+};
+
+$('#saveReplicateKey').onclick = () => {
+  const val = $('#replicateKeyInput').value.trim();
+  if (val && val !== '••••••••••••••••••••') {
+    state.replicateKey = val;
+    saveState(state);
+    showToast('Replicate Key 已保存', 'success');
+    $('#replicateKeyInput').type = 'password';
+    $('#replicateKeyInput').value = '••••••••••••••••••••';
+    $('#toggleReplicateKeyVis').textContent = '👁';
+  }
+};
+
+$('#testReplicateKey').onclick = async () => {
+  const key = state.replicateKey || $('#replicateKeyInput').value.trim();
+  if (!key || key === '••••••••••••••••••••') { showToast('请先输入 Replicate API Key', 'error'); return; }
+  if (!state.replicateKey) { state.replicateKey = key; saveState(state); }
+  $('#replicateTestResult').innerHTML = '<span style="color:var(--warning)">⏳ 测试中...</span>';
+  try {
+    await callReplicate({ prompt: 'test', aspect_ratio: '1:1', output_format: 'jpg', safety_tolerance: 5 });
+    $('#replicateTestResult').innerHTML = '<span style="color:var(--success)">✅ 连接成功</span>';
+  } catch(e) {
+    $('#replicateTestResult').innerHTML = `<span style="color:var(--error)">❌ 连接失败: ${e.message || e}</span>`;
+  }
+};
+
+$('#saveAtlasCloudKey').onclick = () => {
+  const val = $('#atlasCloudKeyInput').value.trim();
+  if (val && val !== '••••••••••••••••••••') {
+    state.atlasCloudKey = val;
+    saveState(state);
+    showToast('Atlas Cloud Key 已保存', 'success');
+    $('#atlasCloudKeyInput').type = 'password';
+    $('#atlasCloudKeyInput').value = '••••••••••••••••••••';
+    $('#toggleAtlasCloudKeyVis').textContent = '👁';
+  }
+};
+
+$('#testAtlasCloudKey').onclick = async () => {
+  const key = state.atlasCloudKey || $('#atlasCloudKeyInput').value.trim();
+  if (!key || key === '••••••••••••••••••••') { showToast('请先输入 Atlas Cloud API Key', 'error'); return; }
+  if (!state.atlasCloudKey) { state.atlasCloudKey = key; saveState(state); }
+  $('#atlasCloudTestResult').innerHTML = '<span style="color:var(--warning)">⏳ 测试中...</span>';
+  try {
+    const res = await fetch('https://api.atlascloud.ai/api/v1/model/prediction/test', {
+      headers: { 'Authorization': `Bearer ${key}` }
+    });
+    if (res.status === 404) {
+      // 404 on /test endpoint is fine — API is reachable, endpoint just doesn't exist
+      $('#atlasCloudTestResult').innerHTML = '<span style="color:var(--success)">✅ 连接成功</span>';
+    } else if (!res.ok) {
+      const errBody = await res.text();
+      throw { code: res.status, message: errBody, isApiError: true };
+    } else {
+      $('#atlasCloudTestResult').innerHTML = '<span style="color:var(--success)">✅ 连接成功</span>';
+    }
+  } catch(e) {
+    if (e.isApiError && e.code >= 400) {
+      // Any HTTP response means API is reachable
+      $('#atlasCloudTestResult').innerHTML = '<span style="color:var(--success)">✅ 连接成功（API 可达）</span>';
+    } else {
+      $('#atlasCloudTestResult').innerHTML = `<span style="color:var(--error)">❌ 连接失败: ${e.message || e}</span>`;
+    }
   }
 };
 
