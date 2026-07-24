@@ -983,16 +983,16 @@ const ATLAS_IMAGE_MODELS = {
     i2i: 'black-forest-labs/flux-2-pro/text-to-image',
     name: 'Flux 2 Pro',
     needTranslation: true,
-    t2iParams: {},
-    i2iParams: {},
+    t2iParams: { enable_base64_output: true },
+    i2iParams: { enable_base64_output: true },
   },
   'atlascloud-seedream': {
     t2i: 'bytedance/seedream-v5.0-pro/text-to-image',
     i2i: 'bytedance/seedream-v5.0-pro/edit',
     name: 'Seedream 5.0 Pro',
     needTranslation: false,
-    t2iParams: { thinking: 'enabled' },
-    i2iParams: {},  // Edit API doesn't support 'thinking'
+    t2iParams: { thinking: 'enabled', enable_base64_output: true },
+    i2iParams: { enable_base64_output: true },
   },
 };
 
@@ -1126,16 +1126,28 @@ async function generateAtlasImage() {
       if (status === 'completed') {
         const outputs = result.data?.outputs || [];
         if (!outputs.length) throw new Error('Atlas Cloud 返回了空结果');
-        state.results = outputs.map((url, i) => ({
-          type: 'image',
-          url: url,
-          blobUrl: url,
-          blob: null,
-          index: i,
-          prompt: prompt,
-          originalPrompt: prompt !== state.prompt ? state.prompt : null,
-          timestamp: Date.now(),
-        }));
+        state.results = outputs.map((output, i) => {
+          // Handle base64 output (from enable_base64_output) vs URL
+          let url, blobUrl;
+          if (typeof output === 'string' && (output.startsWith('data:') || !output.startsWith('http'))) {
+            // Base64 data — convert to blob URL for local use
+            blobUrl = base64ToBlobUrl(output);
+            url = blobUrl;
+          } else {
+            url = output;
+            blobUrl = output;
+          }
+          return {
+            type: 'image',
+            url: url,
+            blobUrl: blobUrl,
+            blob: null,
+            index: i,
+            prompt: prompt,
+            originalPrompt: prompt !== state.prompt ? state.prompt : null,
+            timestamp: Date.now(),
+          };
+        });
         renderResults();
         state.lastError = null;
         hideErrorDetail();
@@ -1166,6 +1178,20 @@ async function generateAtlasImage() {
 // Detect if a string contains Chinese characters
 function hasChinese(text) {
   return /[一-鿿㐀-䶿]/.test(text);
+}
+
+// Convert base64 data URI or raw base64 to blob URL
+function base64ToBlobUrl(base64) {
+  let mime = 'image/jpeg';
+  let data = base64;
+  if (base64.startsWith('data:')) {
+    const m = base64.match(/^data:([^;]+);base64,(.+)$/);
+    if (m) { mime = m[1]; data = m[2]; }
+    else { data = base64.split(',')[1] || base64; }
+  }
+  const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: mime });
+  return URL.createObjectURL(blob);
 }
 
 // Translate Chinese prompt to FLUX-optimized English via Agnes Chat
@@ -1949,7 +1975,13 @@ async function downloadResult(url, filename) {
       blob = await resp.blob();
       URL.revokeObjectURL(url);
     } else {
-      const resp = await fetch(url);
+      let resp = await fetch(url);
+      // If direct fetch fails (e.g. OSS referer policy), retry via proxy
+      if (!resp.ok && (resp.status === 403 || resp.status === 0)) {
+        const proxyUrl = NETLIFY_PROXY + encodeURIComponent(url);
+        resp = await fetch(proxyUrl);
+      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       blob = await resp.blob();
     }
     const blobUrl = URL.createObjectURL(blob);
@@ -1962,8 +1994,9 @@ async function downloadResult(url, filename) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     showToast('下载完成！', 'success');
   } catch(e) {
-    // Fallback: open in new tab
-    window.open(url, '_blank');
+    // Fallback: open in new tab, then try proxy
+    const proxyDownloadUrl = NETLIFY_PROXY + encodeURIComponent(url);
+    window.open(proxyDownloadUrl, '_blank');
     showToast('已在新标签页打开，长按可保存', 'info');
   }
 }
@@ -2900,7 +2933,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v3.0';
+  $('#appVersion').textContent = 'v3.1';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
