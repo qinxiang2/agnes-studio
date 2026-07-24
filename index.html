@@ -920,43 +920,24 @@ async function callAtlasSubmit(payload) {
   };
   const body = JSON.stringify(payload);
 
-  // Proxy chain: direct → CF Worker → Netlify
-  const PROXIES = [
-    { name: 'direct', url: targetUrl, direct: true },
-    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
-    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
-  ];
-
-  let lastNetworkError = null;
-  for (const proxy of PROXIES) {
-    try {
-      const fetchHeaders = proxy.direct ? headers : { ...headers, 'x-requested-with': 'agnes-studio' };
-      const res = await fetch(proxy.url, { method: 'POST', headers: fetchHeaders, body });
-      if (!res.ok) {
-        const errBody = await res.text();
-        let errMsg = errBody;
-        try { errMsg = JSON.parse(errBody); } catch(e) {}
-        const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
-        throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
-      }
-      const data = await res.json();
-      if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
-      return data;
-    } catch(e) {
-      if (e.isApiError || (e.code && e.code >= 400)) throw e;
-      lastNetworkError = e;
-    }
+  // Direct only — no proxy retry for POST (avoids duplicate submissions)
+  const res = await fetch(targetUrl, { method: 'POST', headers, body });
+  if (!res.ok) {
+    const errBody = await res.text();
+    let errMsg = errBody;
+    try { errMsg = JSON.parse(errBody); } catch(e) {}
+    const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
+    throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
   }
-  throw lastNetworkError || new Error('Failed to fetch (all proxies unreachable)');
+  return await res.json();
 }
 
 async function callAtlasPoll(predictionId) {
   const targetUrl = `https://api.atlascloud.ai/api/v1/model/prediction/${encodeURIComponent(predictionId)}`;
   const headers = { 'Authorization': `Bearer ${state.atlasCloudKey}` };
-  // Proxy chain: direct → CF Worker → Netlify
+  // GET is idempotent — proxy retry is safe
   const PROXIES = [
     { name: 'direct', url: targetUrl, direct: true },
-    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
     { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
   ];
   let lastNetworkError = null;
@@ -1004,28 +985,9 @@ async function callAtlasImage(payload) {
   };
   const body = JSON.stringify(payload);
 
-  // Atlas Cloud is directly accessible from China, try direct first
-  try {
-    const res = await fetch(targetUrl, { method: 'POST', headers, body });
-    if (!res.ok) {
-      const errBody = await res.text();
-      let errMsg = errBody;
-      try { errMsg = JSON.parse(errBody); } catch(e) {}
-      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
-      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
-    }
-    return await res.json();
-  } catch(e) {
-    if (e.isApiError || (e.code && e.code >= 400)) throw e;
-  }
-
-  // Fallback: Netlify proxy
-  const proxyUrl = NETLIFY_PROXY + encodeURIComponent(targetUrl);
-  const res = await fetch(proxyUrl, {
-    method: 'POST',
-    headers: { ...headers, 'x-requested-with': 'agnes-studio' },
-    body,
-  });
+  // Direct only — Atlas Cloud is accessible from China. No proxy retry
+  // to avoid duplicate submissions on network hiccups.
+  const res = await fetch(targetUrl, { method: 'POST', headers, body });
   if (!res.ok) {
     const errBody = await res.text();
     let errMsg = errBody;
@@ -1033,9 +995,7 @@ async function callAtlasImage(payload) {
     const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
     throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
   }
-  const data = await res.json();
-  if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
-  return data;
+  return await res.json();
 }
 
 async function pollAtlasImage(predictionId) {
@@ -2933,7 +2893,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v3.1';
+  $('#appVersion').textContent = 'v3.2';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
