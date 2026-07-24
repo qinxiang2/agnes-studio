@@ -1,5 +1,5 @@
 // Agnes AI Studio - Service Worker
-const CACHE_NAME = 'agnes-studio-v23';
+const CACHE_NAME = 'agnes-studio-v24';
 const STATIC_ASSETS = [
   './',
   './index.html',

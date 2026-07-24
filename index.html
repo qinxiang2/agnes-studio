@@ -555,7 +555,8 @@ img,video{max-width:100%;display:block}
       <label class="form-label">图片生成供应商</label>
       <select class="form-select" id="imageProvider">
         <option value="agnes">Agnes AI（默认）</option>
-        <option value="atlascloud-flux">FLUX.1 Pro（Atlas Cloud · 直连 · 宽松审查）</option>
+        <option value="atlascloud-seedream">Seedream 5.0 Pro（Atlas Cloud · 直连 · 无审查 · 最强写实）</option>
+        <option value="atlascloud-flux2">Flux 2 Pro（Atlas Cloud · 直连 · 无审查）</option>
         <option value="replicate">FLUX.1 Pro（Replicate · 需代理）</option>
       </select>
     </div>
@@ -971,7 +972,26 @@ async function callAtlasPoll(predictionId) {
   throw lastNetworkError || new Error('Failed to fetch (all proxies unreachable)');
 }
 
-// ─── Atlas Cloud Image API (FLUX via Atlas) ─────────────────
+// ─── Atlas Cloud Image API (Flux 2 / Seedream) ─────────────
+
+// Map provider → model config
+const ATLAS_IMAGE_MODELS = {
+  'atlascloud-flux2': {
+    t2i: 'black-forest-labs/flux-2-pro/text-to-image',
+    i2i: 'black-forest-labs/flux-2-pro/text-to-image',  // Flux doesn't have separate I2I endpoint
+    name: 'Flux 2 Pro',
+    needTranslation: true,
+    extraParams: {},
+  },
+  'atlascloud-seedream': {
+    t2i: 'bytedance/seedream-v5.0-pro/text-to-image',
+    i2i: 'bytedance/seedream-v5.0-pro/edit',
+    name: 'Seedream 5.0 Pro',
+    needTranslation: false,  // Seedream handles Chinese natively via "thinking"
+    extraParams: { thinking: 'enabled' },  // Auto-optimize prompts
+  },
+};
+
 async function callAtlasImage(payload) {
   const targetUrl = 'https://api.atlascloud.ai/api/v1/model/generateImage';
   const headers = {
@@ -1014,8 +1034,8 @@ async function callAtlasImage(payload) {
   return data;
 }
 
-async function pollAtlasImage(requestId) {
-  const targetUrl = `https://api.atlascloud.ai/api/v1/model/result/${encodeURIComponent(requestId)}`;
+async function pollAtlasImage(predictionId) {
+  const targetUrl = `https://api.atlascloud.ai/api/v1/model/prediction/${encodeURIComponent(predictionId)}`;
   const headers = { 'Authorization': `Bearer ${state.atlasCloudKey}` };
   try {
     const res = await fetch(targetUrl, { method: 'GET', headers });
@@ -1023,7 +1043,6 @@ async function pollAtlasImage(requestId) {
     return await res.json();
   } catch(e) {
     if (e.isApiError || (e.code && e.code >= 400)) throw e;
-    // Fallback Netlify
     const proxyUrl = NETLIFY_PROXY + encodeURIComponent(targetUrl);
     const res2 = await fetch(proxyUrl, { method: 'GET', headers: { ...headers, 'x-requested-with': 'agnes-studio' } });
     if (!res2.ok) throw { code: res2.status, message: `HTTP ${res2.status}`, isApiError: true };
@@ -1031,14 +1050,22 @@ async function pollAtlasImage(requestId) {
   }
 }
 
-async function generateAtlasFluxImage() {
+async function generateAtlasImage() {
+  // Migrate legacy provider
+  if (state.imageProvider === 'atlascloud-flux') state.imageProvider = 'atlascloud-flux2';
+
+  const modelCfg = ATLAS_IMAGE_MODELS[state.imageProvider];
+  if (!modelCfg) { showToast('未知的模型配置', 'error'); return; }
+
   state.isGenerating = true;
   renderGenerateBtn();
   hideResults();
 
   const s = state.settings;
   let prompt = state.prompt;
-  if (hasChinese(prompt)) {
+
+  // Translate Chinese → English only for models that need it
+  if (modelCfg.needTranslation && hasChinese(prompt)) {
     showToast('🔤 正在翻译为英文...', 'info');
     prompt = await translatePromptForFlux(prompt);
   }
@@ -1048,35 +1075,36 @@ async function generateAtlasFluxImage() {
   const sizeMap = { '1:1': '1024*1024', '16:9': '1280*720', '9:16': '720*1280', '4:3': '1024*768', '3:4': '768*1024', '3:2': '1152*768', '2:3': '768*1152' };
   const size = sizeMap[ratio] || '1024*1024';
 
+  const isI2I = state.mode === 'image-to-image' && state.imageBase64;
   const input = {
-    model: 'black-forest-labs/flux-1.1-pro',
+    model: isI2I ? modelCfg.i2i : modelCfg.t2i,
     prompt: prompt,
     size: size,
     num_images: 1,
     enable_sync_mode: false,
     output_format: 'jpeg',
+    ...modelCfg.extraParams,
   };
 
   // Image-to-image
-  if (state.mode === 'image-to-image' && state.imageBase64) {
+  if (isI2I) {
     input.images = [`data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`];
   }
 
   try {
-    showToast('FLUX.1 Pro (Atlas Cloud) 生成中...', 'info');
+    showToast(`${modelCfg.name} 生成中...`, 'info');
     const submit = await callAtlasImage(input);
     if (submit.code && submit.code !== 200) {
       throw { code: submit.code, message: submit.msg || 'Atlas Cloud 返回错误', isApiError: true };
     }
-    const requestId = submit.data?.id;
-    if (!requestId) throw new Error('Atlas Cloud 未返回任务 ID');
+    const predictionId = submit.data?.id;
+    if (!predictionId) throw new Error('Atlas Cloud 未返回任务 ID');
 
-    // Poll for result
     const startTime = Date.now();
     const TIMEOUT = 300000; // 5 min
     while (Date.now() - startTime < TIMEOUT) {
       await new Promise(r => setTimeout(r, 3000));
-      const result = await pollAtlasImage(requestId);
+      const result = await pollAtlasImage(predictionId);
       if (result.code && result.code !== 200) {
         throw { code: result.code, message: result.msg || '轮询失败', isApiError: true };
       }
@@ -1103,14 +1131,13 @@ async function generateAtlasFluxImage() {
       if (status === 'failed') {
         throw { code: 500, message: result.data?.error || 'Atlas Cloud 生成失败', isApiError: true };
       }
-      // Still processing, update progress
-      updateVideoProgress(status, startTime, TIMEOUT); // reuse existing progress UI
+      updateVideoProgress(status, startTime, TIMEOUT);
     }
     throw new Error('Atlas Cloud 生成超时（5分钟）');
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
     showErrorDetail();
-    showToast('FLUX 生成失败', 'error');
+    showToast(`${modelCfg.name} 生成失败`, 'error');
   } finally {
     state.isGenerating = false;
     renderGenerateBtn();
@@ -1213,9 +1240,9 @@ async function generateImage() {
   if (state.mode === 'image-to-image' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
 
   // Provider dispatch
-  if (state.imageProvider === 'atlascloud-flux') {
+  if (state.imageProvider === 'atlascloud-seedream' || state.imageProvider === 'atlascloud-flux2') {
     if (!state.atlasCloudKey) { showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return; }
-    return generateAtlasFluxImage();
+    return generateAtlasImage();
   }
   if (state.imageProvider === 'replicate') {
     if (!state.replicateKey) { showToast('请先在设置中输入 Replicate API Key', 'error'); return; }
@@ -2039,8 +2066,11 @@ function updateProviderIndicator() {
       el.style.display = 'none';
     }
   } else {
-    if (state.imageProvider === 'atlascloud-flux') {
-      el.textContent = '🖼️ 当前: FLUX.1 Pro (Atlas Cloud · 直连)';
+    if (state.imageProvider === 'atlascloud-seedream') {
+      el.textContent = '🖼️ 当前: Seedream 5.0 Pro (Atlas Cloud)';
+      el.style.display = 'block';
+    } else if (state.imageProvider === 'atlascloud-flux2') {
+      el.textContent = '🖼️ 当前: Flux 2 Pro (Atlas Cloud)';
       el.style.display = 'block';
     } else if (state.imageProvider === 'replicate') {
       el.textContent = '🖼️ 当前: FLUX.1 Pro (Replicate)';
@@ -2065,7 +2095,7 @@ function renderSettingsForm() {
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
   $('#videoProvider').value = state.videoProvider;
   $('#atlasCloudKeyInput').value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
-  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider === 'atlascloud-flux') ? 'block' : 'none';
+  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
   updateStatusDot();
 }
 
@@ -2174,7 +2204,7 @@ $('#toggleReplicateKeyVis').onclick = () => {
 };
 $('#videoProvider').onchange = () => {
   state.videoProvider = $('#videoProvider').value;
-  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider === 'atlascloud-flux') ? 'block' : 'none';
+  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
   saveState(state);
 };
 $('#atlasCloudKeyInput').onchange = () => {
@@ -2804,7 +2834,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.3';
+  $('#appVersion').textContent = 'v2.4';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
