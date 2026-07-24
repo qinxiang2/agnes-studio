@@ -1,4 +1,6 @@
 [build]
+  command = "echo ok"
+  publish = "."
   functions = "netlify/functions"
 
 [[redirects]]
