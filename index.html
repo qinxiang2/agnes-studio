@@ -1102,18 +1102,25 @@ async function generateAtlasImage() {
     showToast(`${modelCfg.name} 生成中...`, 'info');
     const submit = await callAtlasImage(input);
     if (submit.code && submit.code !== 200) {
-      throw { code: submit.code, message: submit.msg || 'Atlas Cloud 返回错误', isApiError: true };
+      const errDetail = submit.msg || submit.message || submit.error || JSON.stringify(submit).slice(0, 300);
+      throw { code: submit.code, message: `提交错误 [${submit.code}]: ${errDetail}`, isApiError: true };
     }
     const predictionId = submit.data?.id;
-    if (!predictionId) throw new Error('Atlas Cloud 未返回任务 ID');
+    if (!predictionId) {
+      throw new Error('Atlas Cloud 未返回任务 ID，响应: ' + JSON.stringify(submit).slice(0, 300));
+    }
 
     const startTime = Date.now();
     const TIMEOUT = 300000; // 5 min
+    let lastResult = null;
     while (Date.now() - startTime < TIMEOUT) {
       await new Promise(r => setTimeout(r, 3000));
       const result = await pollAtlasImage(predictionId);
+      lastResult = result;
+      // Handle API-level errors
       if (result.code && result.code !== 200) {
-        throw { code: result.code, message: result.msg || '轮询失败', isApiError: true };
+        const errDetail = result.msg || result.message || result.error || JSON.stringify(result).slice(0, 300);
+        throw { code: result.code, message: `轮询错误 [${result.code}]: ${errDetail}`, isApiError: true };
       }
       const status = result.data?.status;
       if (status === 'completed') {
@@ -1136,11 +1143,14 @@ async function generateAtlasImage() {
         return;
       }
       if (status === 'failed') {
-        throw { code: 500, message: result.data?.error || 'Atlas Cloud 生成失败', isApiError: true };
+        const failMsg = result.data?.error || result.data?.message || JSON.stringify(result.data).slice(0, 300);
+        throw { code: 500, message: `生成失败: ${failMsg}`, isApiError: true };
       }
       updateVideoProgress(status, startTime, TIMEOUT);
     }
-    throw new Error('Atlas Cloud 生成超时（5分钟）');
+    // Timeout: show last known state
+    const lastStatus = lastResult?.data?.status || 'unknown';
+    throw new Error(`生成超时（5分钟），最后状态: ${lastStatus}`);
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
     showErrorDetail();
@@ -2890,7 +2900,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.7';
+  $('#appVersion').textContent = 'v2.8';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
