@@ -781,9 +781,10 @@ function clarify(str) { try { return atob(str).split('').reverse().join(''); } c
 const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
 const AGNES_ROOT = 'https://apihub.agnes-ai.com';
 const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?';
+const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?';
 const CORS_PROXIES = [
   AGNES_PROXY,
-  'https://corsproxy.io/?',
+  NETLIFY_PROXY,
 ];
 
 async function callAgnes(endpoint, options = {}) {
@@ -875,38 +876,35 @@ async function callReplicate(payload) {
   };
   const body = JSON.stringify({ input: payload });
 
-  // Try direct first
-  try {
-    const res = await fetch(targetUrl, { method: 'POST', headers, body });
-    if (!res.ok) {
-      const errBody = await res.text();
-      let errMsg = errBody;
-      try { errMsg = JSON.parse(errBody); } catch(e) {}
-      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
-      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
-    }
-    return await res.json();
-  } catch(e) {
-    if (e.isApiError || (e.code && e.code >= 400)) throw e;
-  }
+  // Proxy chain: direct → CF Worker → Netlify
+  const PROXIES = [
+    { name: 'direct', url: targetUrl, direct: true },
+    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+  ];
 
-  // Fallback: Cloudflare Worker proxy
-  const proxyUrl = AGNES_PROXY + encodeURIComponent(targetUrl);
-  const res = await fetch(proxyUrl, {
-    method: 'POST',
-    headers: { ...headers, 'x-requested-with': 'agnes-studio' },
-    body,
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    let errMsg = errBody;
-    try { errMsg = JSON.parse(errBody); } catch(e) {}
-    const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
-    throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+  let lastNetworkError = null;
+  for (const proxy of PROXIES) {
+    try {
+      const fetchHeaders = proxy.direct ? headers : { ...headers, 'x-requested-with': 'agnes-studio' };
+      const res = await fetch(proxy.url, { method: 'POST', headers: fetchHeaders, body });
+      if (!res.ok) {
+        const errBody = await res.text();
+        let errMsg = errBody;
+        try { errMsg = JSON.parse(errBody); } catch(e) {}
+        const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || JSON.stringify(errMsg)) : errMsg;
+        throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+      }
+      const data = await res.json();
+      if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+      return data;
+    } catch(e) {
+      if (e.isApiError || (e.code && e.code >= 400)) throw e;
+      lastNetworkError = e;
+      // Continue to next proxy on network errors
+    }
   }
-  const data = await res.json();
-  if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
-  return data;
+  throw lastNetworkError || new Error('Failed to fetch (all proxies unreachable)');
 }
 
 // ─── Atlas Cloud API (Seedance videos) ─────────────────────
@@ -918,48 +916,58 @@ async function callAtlasSubmit(payload) {
   };
   const body = JSON.stringify(payload);
 
-  try {
-    const res = await fetch(targetUrl, { method: 'POST', headers, body });
-    if (!res.ok) {
-      const errBody = await res.text();
-      let errMsg = errBody;
-      try { errMsg = JSON.parse(errBody); } catch(e) {}
-      const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
-      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
-    }
-    return await res.json();
-  } catch(e) {
-    if (e.isApiError || (e.code && e.code >= 400)) throw e;
-  }
+  // Proxy chain: direct → CF Worker → Netlify
+  const PROXIES = [
+    { name: 'direct', url: targetUrl, direct: true },
+    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+  ];
 
-  // Fallback: Cloudflare Worker proxy
-  const proxyUrl = AGNES_PROXY + encodeURIComponent(targetUrl);
-  const res = await fetch(proxyUrl, {
-    method: 'POST',
-    headers: { ...headers, 'x-requested-with': 'agnes-studio' },
-    body,
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    try { errMsg = JSON.parse(errBody); } catch(e) {}
-    const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
-    throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+  let lastNetworkError = null;
+  for (const proxy of PROXIES) {
+    try {
+      const fetchHeaders = proxy.direct ? headers : { ...headers, 'x-requested-with': 'agnes-studio' };
+      const res = await fetch(proxy.url, { method: 'POST', headers: fetchHeaders, body });
+      if (!res.ok) {
+        const errBody = await res.text();
+        let errMsg = errBody;
+        try { errMsg = JSON.parse(errBody); } catch(e) {}
+        const msg = typeof errMsg === 'object' ? (errMsg.error || errMsg.detail || errMsg.message || JSON.stringify(errMsg)) : errMsg;
+        throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+      }
+      const data = await res.json();
+      if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
+      return data;
+    } catch(e) {
+      if (e.isApiError || (e.code && e.code >= 400)) throw e;
+      lastNetworkError = e;
+    }
   }
-  const data = await res.json();
-  if (data.contents) { try { return JSON.parse(data.contents); } catch(e) { return data; } }
-  return data;
+  throw lastNetworkError || new Error('Failed to fetch (all proxies unreachable)');
 }
 
 async function callAtlasPoll(predictionId) {
-  const url = `https://api.atlascloud.ai/api/v1/model/prediction/${encodeURIComponent(predictionId)}`;
+  const targetUrl = `https://api.atlascloud.ai/api/v1/model/prediction/${encodeURIComponent(predictionId)}`;
   const headers = { 'Authorization': `Bearer ${state.atlasCloudKey}` };
-  try {
-    const res = await fetch(url, { method: 'GET', headers });
-    if (!res.ok) throw { code: res.status, message: `HTTP ${res.status}`, isApiError: true };
-    return await res.json();
-  } catch(e) {
-    throw e;
+  // Proxy chain: direct → CF Worker → Netlify
+  const PROXIES = [
+    { name: 'direct', url: targetUrl, direct: true },
+    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+  ];
+  let lastNetworkError = null;
+  for (const proxy of PROXIES) {
+    try {
+      const fetchHeaders = proxy.direct ? headers : { ...headers, 'x-requested-with': 'agnes-studio' };
+      const res = await fetch(proxy.url, { method: 'GET', headers: fetchHeaders });
+      if (!res.ok) throw { code: res.status, message: `HTTP ${res.status}`, isApiError: true };
+      return await res.json();
+    } catch(e) {
+      if (e.isApiError || (e.code && e.code >= 400)) throw e;
+      lastNetworkError = e;
+    }
   }
+  throw lastNetworkError || new Error('Failed to fetch (all proxies unreachable)');
 }
 
 // ─── Image Generation ──────────────────────────────────────
