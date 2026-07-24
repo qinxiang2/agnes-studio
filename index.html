@@ -576,7 +576,8 @@ img,video{max-width:100%;display:block}
       <label class="form-label">视频生成供应商</label>
       <select class="form-select" id="videoProvider">
         <option value="agnes">Agnes AI（默认）</option>
-        <option value="atlascloud">Seedance 1.5 Pro Spicy（Atlas Cloud · 宽松审查）</option>
+        <option value="atlascloud-seedance2">Seedance 2.0（Atlas Cloud · 全球可用 · T2V+I2V）</option>
+        <option value="atlascloud-wan27spicy">Wan 2.7 Spicy（Atlas Cloud · 无审查 I2V）</option>
       </select>
     </div>
     <div class="form-group" id="atlasCloudKeyGroup" style="display:none">
@@ -1336,21 +1337,54 @@ function getVideoDimensions(resolution, ratio) {
   return { w, h };
 }
 
+// ─── Atlas Cloud Video Model Config ─────────────────────────
+const ATLAS_VIDEO_MODELS = {
+  'atlascloud-seedance2': {
+    t2v: 'bytedance/seedance-2.0/text-to-video',
+    i2v: 'bytedance/seedance-2.0/image-to-video',
+    name: 'Seedance 2.0',
+    hasAudio: true,
+    maxDuration: 15,
+  },
+  'atlascloud-wan27spicy': {
+    t2v: null,  // I2V only
+    i2v: 'atlascloud/wan-2.7-spicy/image-to-video',
+    name: 'Wan 2.7 Spicy',
+    hasAudio: false,
+    maxDuration: 15,
+  },
+};
+
 async function createAtlasVideo() {
+  // Migrate legacy provider
+  if (state.videoProvider === 'atlascloud') state.videoProvider = 'atlascloud-seedance2';
+
+  const modelCfg = ATLAS_VIDEO_MODELS[state.videoProvider];
+  if (!modelCfg) { showToast('未知的视频模型配置', 'error'); return; }
+
   state.isGenerating = true;
   renderGenerateBtn();
   hideResults();
 
   const s = state.settings;
   const isImageToVideo = state.mode === 'image-to-video';
+
+  // Pick correct model: I2V or T2V
+  const modelId = isImageToVideo ? modelCfg.i2v : modelCfg.t2v;
+  if (!modelId) {
+    showToast(`${modelCfg.name} 仅支持图生视频`, 'error');
+    state.isGenerating = false;
+    renderGenerateBtn();
+    return;
+  }
+
   const payload = {
-    model: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
+    model: modelId,
     prompt: state.prompt,
-    duration: s.videoDuration || 5,
+    duration: Math.min(s.videoDuration || 5, modelCfg.maxDuration),
     resolution: s.videoResolution || '720p',
     aspect_ratio: s.videoRatio || '16:9',
-    generate_audio: !!s.videoAudio,
-    camera_fixed: false,
+    generate_audio: modelCfg.hasAudio && !!s.videoAudio,
     seed: -1,
   };
 
@@ -1370,7 +1404,7 @@ async function createAtlasVideo() {
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
     showErrorDetail();
-    showToast('Seedance 创建任务失败', 'error');
+    showToast(`${modelCfg.name} 创建任务失败`, 'error');
     state.isGenerating = false;
     renderGenerateBtn();
   }
@@ -1471,7 +1505,7 @@ async function createVideo() {
   if (state.mode === 'image-to-video' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
 
   // Provider dispatch
-  if (state.videoProvider === 'atlascloud') {
+  if (state.videoProvider && state.videoProvider.startsWith('atlascloud-')) {
     if (!state.atlasCloudKey) { showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return; }
     return createAtlasVideo();
   }
@@ -2059,8 +2093,11 @@ function updateProviderIndicator() {
   const el = $('#providerIndicator');
   const isVideo = state.mode === 'text-to-video' || state.mode === 'image-to-video';
   if (isVideo) {
-    if (state.videoProvider === 'atlascloud') {
-      el.textContent = '🎬 当前: Seedance 1.5 Pro Spicy (Atlas Cloud)';
+    if (state.videoProvider === 'atlascloud-seedance2') {
+      el.textContent = '🎬 当前: Seedance 2.0 (Atlas Cloud)';
+      el.style.display = 'block';
+    } else if (state.videoProvider === 'atlascloud-wan27spicy') {
+      el.textContent = '🎬 当前: Wan 2.7 Spicy (Atlas Cloud · I2V)';
       el.style.display = 'block';
     } else {
       el.style.display = 'none';
@@ -2095,7 +2132,7 @@ function renderSettingsForm() {
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
   $('#videoProvider').value = state.videoProvider;
   $('#atlasCloudKeyInput').value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
-  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
+  $('#atlasCloudKeyGroup').style.display = ((state.videoProvider && state.videoProvider.startsWith('atlascloud')) || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
   updateStatusDot();
 }
 
@@ -2183,7 +2220,7 @@ $('#defaultVideoDuration').onchange = () => { state.settings.videoDuration = par
 $('#imageProvider').onchange = () => {
   state.imageProvider = $('#imageProvider').value;
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
-  $('#atlasCloudKeyGroup').style.display = (state.imageProvider === 'atlascloud-flux' || state.videoProvider === 'atlascloud') ? 'block' : 'none';
+  $('#atlasCloudKeyGroup').style.display = ((state.imageProvider && state.imageProvider.startsWith('atlascloud')) || (state.videoProvider && state.videoProvider.startsWith('atlascloud'))) ? 'block' : 'none';
   saveState(state);
 };
 $('#replicateKeyInput').onchange = () => {
@@ -2204,7 +2241,7 @@ $('#toggleReplicateKeyVis').onclick = () => {
 };
 $('#videoProvider').onchange = () => {
   state.videoProvider = $('#videoProvider').value;
-  $('#atlasCloudKeyGroup').style.display = (state.videoProvider === 'atlascloud' || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
+  $('#atlasCloudKeyGroup').style.display = ((state.videoProvider && state.videoProvider.startsWith('atlascloud')) || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
   saveState(state);
 };
 $('#atlasCloudKeyInput').onchange = () => {
@@ -2350,7 +2387,10 @@ $('#btnGenerate').onclick = () => {
   if (!isVideo && state.imageProvider === 'replicate' && !state.replicateKey) {
     showToast('请先在设置中输入 Replicate API Key', 'error'); return;
   }
-  if (isVideo && state.videoProvider === 'atlascloud' && !state.atlasCloudKey) {
+  if (isVideo && state.videoProvider && state.videoProvider.startsWith('atlascloud-') && !state.atlasCloudKey) {
+    showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return;
+  }
+  if (!isVideo && state.imageProvider && state.imageProvider.startsWith('atlascloud-') && !state.atlasCloudKey) {
     showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return;
   }
   if (!state.apiKey && ((!isVideo && state.imageProvider === 'agnes') || (isVideo && state.videoProvider === 'agnes'))) {
@@ -2834,7 +2874,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.4';
+  $('#appVersion').textContent = 'v2.5';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
