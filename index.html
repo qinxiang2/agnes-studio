@@ -980,17 +980,19 @@ async function callAtlasPoll(predictionId) {
 const ATLAS_IMAGE_MODELS = {
   'atlascloud-flux2': {
     t2i: 'black-forest-labs/flux-2-pro/text-to-image',
-    i2i: 'black-forest-labs/flux-2-pro/text-to-image',  // Flux doesn't have separate I2I endpoint
+    i2i: 'black-forest-labs/flux-2-pro/text-to-image',
     name: 'Flux 2 Pro',
     needTranslation: true,
-    extraParams: {},
+    t2iParams: {},
+    i2iParams: {},
   },
   'atlascloud-seedream': {
     t2i: 'bytedance/seedream-v5.0-pro/text-to-image',
     i2i: 'bytedance/seedream-v5.0-pro/edit',
     name: 'Seedream 5.0 Pro',
-    needTranslation: false,  // Seedream handles Chinese natively via "thinking"
-    extraParams: { thinking: 'enabled' },  // Auto-optimize prompts
+    needTranslation: false,
+    t2iParams: { thinking: 'enabled' },
+    i2iParams: {},  // Edit API doesn't support 'thinking'
   },
 };
 
@@ -1078,19 +1080,22 @@ async function generateAtlasImage() {
   const size = sizeMap[ratio] || '1024*1024';
 
   const isI2I = state.mode === 'image-to-image' && state.imageBase64;
+  const modeParams = isI2I ? modelCfg.i2iParams : modelCfg.t2iParams;
   const input = {
     model: isI2I ? modelCfg.i2i : modelCfg.t2i,
     prompt: prompt,
     size: size,
-    num_images: 1,
     enable_sync_mode: false,
     output_format: 'jpeg',
-    ...modelCfg.extraParams,
+    ...modeParams,
   };
 
-  // Image-to-image
+  // Image-to-image: add reference images (required for Edit API)
   if (isI2I) {
     input.images = [`data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`];
+  } else {
+    // T2I: add num_images (not supported by Edit API)
+    if (!input.num_images) input.num_images = 1;
   }
 
   try {
@@ -2885,7 +2890,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.6';
+  $('#appVersion').textContent = 'v2.7';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
