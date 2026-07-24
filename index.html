@@ -639,8 +639,8 @@ img,video{max-width:100%;display:block}
   </div>
 
   <div class="settings-section" style="text-align:center">
-    <p style="color:var(--text-muted);font-size:13px">Agnes AI Studio v1.0</p>
-    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">Agnes AI / Replicate / Atlas Cloud</p>
+    <p style="color:var(--text-muted);font-size:13px">Agnes AI Studio <span id="appVersion">v1.0</span></p>
+    <p style="color:var(--text-muted);font-size:12px;margin-top:4px">SW <span id="swVersion">—</span> · Agnes AI / Replicate / Atlas Cloud</p>
   </div>
 </div>
 
@@ -2341,6 +2341,8 @@ $('#closeBanner').onclick = () => {
 // ─── Service Worker ─────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
+    // Read SW version from cache name
+    updateSWVersion();
     // 检测 SW 更新，自动刷新页面
     reg.addEventListener('updatefound', () => {
       const newWorker = reg.installing;
@@ -2355,6 +2357,19 @@ if ('serviceWorker' in navigator) {
       }
     });
   }).catch(() => {});
+}
+
+// Read active SW cache version and update UI
+function updateSWVersion() {
+  try {
+    caches.keys().then(keys => {
+      const agnes = keys.find(k => k.startsWith('agnes-studio-'));
+      if (agnes) {
+        const v = agnes.replace('agnes-studio-', '');
+        $('#swVersion').textContent = v.toUpperCase();
+      }
+    });
+  } catch(e) {}
 }
 
 // ─── Chat (Agnes 2.0 Flash) ─────────────────────────────────
@@ -2634,6 +2649,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
+  $('#appVersion').textContent = 'v2.2';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
