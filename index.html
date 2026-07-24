@@ -1146,7 +1146,7 @@ async function generateAtlasImage() {
         const failMsg = result.data?.error || result.data?.message || JSON.stringify(result.data).slice(0, 300);
         throw { code: 500, message: `生成失败: ${failMsg}`, isApiError: true };
       }
-      updateVideoProgress(status, startTime, TIMEOUT);
+      // Still processing — continue polling
     }
     // Timeout: show last known state
     const lastStatus = lastResult?.data?.status || 'unknown';
@@ -2900,7 +2900,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.9';
+  $('#appVersion').textContent = 'v3.0';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
