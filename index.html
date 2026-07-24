@@ -577,6 +577,7 @@ img,video{max-width:100%;display:block}
       <select class="form-select" id="videoProvider">
         <option value="agnes">Agnes AI（默认）</option>
         <option value="atlascloud-seedance2">Seedance 2.0（Atlas Cloud · 全球可用 · T2V+I2V）</option>
+        <option value="atlascloud-seedance15spicy">Seedance 1.5 Pro Spicy（Atlas Cloud · 便宜 · 有地区限制）</option>
         <option value="atlascloud-wan27spicy">Wan 2.7 Spicy（Atlas Cloud · 无审查 I2V）</option>
       </select>
     </div>
@@ -1346,8 +1347,15 @@ const ATLAS_VIDEO_MODELS = {
     hasAudio: true,
     maxDuration: 15,
   },
+  'atlascloud-seedance15spicy': {
+    t2v: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
+    i2v: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
+    name: 'Seedance 1.5 Pro Spicy',
+    hasAudio: false,
+    maxDuration: 5,
+  },
   'atlascloud-wan27spicy': {
-    t2v: null,  // I2V only
+    t2v: null,
     i2v: 'atlascloud/wan-2.7-spicy/image-to-video',
     name: 'Wan 2.7 Spicy',
     hasAudio: false,
@@ -2095,6 +2103,9 @@ function updateProviderIndicator() {
   if (isVideo) {
     if (state.videoProvider === 'atlascloud-seedance2') {
       el.textContent = '🎬 当前: Seedance 2.0 (Atlas Cloud)';
+      el.style.display = 'block';
+    } else if (state.videoProvider === 'atlascloud-seedance15spicy') {
+      el.textContent = '🎬 当前: Seedance 1.5 Pro Spicy (Atlas Cloud)';
       el.style.display = 'block';
     } else if (state.videoProvider === 'atlascloud-wan27spicy') {
       el.textContent = '🎬 当前: Wan 2.7 Spicy (Atlas Cloud · I2V)';
@@ -2874,7 +2885,7 @@ function clearChatHistory() {
 
 // ─── Init ───────────────────────────────────────────────────
 function init() {
-  $('#appVersion').textContent = 'v2.5';
+  $('#appVersion').textContent = 'v2.6';
   updateModeUI();
   renderSettingsGrid();
   renderSettingsForm();
