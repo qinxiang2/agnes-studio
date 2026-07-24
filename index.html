@@ -971,14 +971,56 @@ async function callAtlasPoll(predictionId) {
 }
 
 // ─── Image Generation ──────────────────────────────────────
+
+// Detect if a string contains Chinese characters
+function hasChinese(text) {
+  return /[一-鿿㐀-䶿]/.test(text);
+}
+
+// Translate Chinese prompt to FLUX-optimized English via Agnes Chat
+async function translatePromptForFlux(chinesePrompt) {
+  if (!hasChinese(chinesePrompt)) return chinesePrompt;
+  try {
+    const result = await callAgnes('/chat/completions', {
+      method: 'POST',
+      body: {
+        model: 'agnes-2.0-flash',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a professional translator. Translate the Chinese AI image prompt into English, optimized for FLUX.1 Pro. Follow these rules: 1) Output ONLY the English prompt, no explanations 2) Keep the detailed, structured style with quality keywords like "masterpiece, best quality, 8K, photorealistic" 3) Preserve all visual details, composition, lighting, style 4) Use natural English that FLUX understands well.'
+          },
+          { role: 'user', content: chinesePrompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 1024,
+      },
+    });
+    const translated = result.choices?.[0]?.message?.content?.trim();
+    if (translated && translated.length > 3) {
+      showToast('🔤 提示词已翻译为英文 (FLUX)', 'success');
+      return translated;
+    }
+  } catch(e) {
+    console.warn('Prompt translation failed, using original:', e);
+  }
+  return chinesePrompt;
+}
+
 async function generateReplicateImage() {
   state.isGenerating = true;
   renderGenerateBtn();
   hideResults();
 
   const s = state.settings;
+  // Translate Chinese prompts to English for FLUX
+  let prompt = state.prompt;
+  if (hasChinese(prompt)) {
+    showToast('🔤 正在翻译为英文...', 'info');
+    prompt = await translatePromptForFlux(prompt);
+  }
   const input = {
-    prompt: state.prompt,
+    prompt: prompt,
     aspect_ratio: s.imageRatio || '1:1',
     output_format: 'jpg',
     safety_tolerance: 5,
@@ -1001,7 +1043,8 @@ async function generateReplicateImage() {
       blobUrl: url,
       blob: null,
       index: i,
-      prompt: state.prompt,
+      prompt: prompt,  // Use translated prompt for FLUX
+      originalPrompt: prompt !== state.prompt ? state.prompt : null,
       timestamp: Date.now(),
     }));
     renderResults();
