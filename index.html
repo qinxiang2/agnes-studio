@@ -757,8 +757,8 @@ const state = {
   imageFileName: null,
   settings: Object.assign({
     imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
-    videoResolution: '720p', videoRatio: '16:9', videoDuration: 5, videoFps: 24, videoAudio: false,
-    imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
+    videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
+    imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-2.5-flash',
   }, saved.settings || {}),
   proxyMode: saved.proxyMode || 'auto',
   customProxyUrl: saved.customProxyUrl || '',
@@ -773,6 +773,12 @@ const state = {
   activeVideoTaskId: null,
   videoStartTime: null,
 };
+
+// 迁移: 旧版视频模型升级为 agnes-video-2.5-flash（localStorage 旧值会覆盖上方新默认值）
+if (state.settings.videoModel === 'agnes-video-v2.0') {
+  state.settings.videoModel = 'agnes-video-2.5-flash';
+}
+
 const listeners = {};
 function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
 function emit(evt, data) { (listeners[evt] || []).forEach(fn => fn(data)); }
@@ -1315,29 +1321,7 @@ async function generateImage() {
 }
 
 // ─── Video Generation ──────────────────────────────────────
-function calcNumFrames(duration, fps) {
-  // num_frames must be <= 441 and follow 8n+1 rule
-  const desired = Math.min(duration * fps, 441);
-  const n = Math.round((desired - 1) / 8);
-  return Math.min(Math.max(n * 8 + 1, 1), 441);
-}
-
-function getVideoDimensions(resolution, ratio) {
-  // 以高度为基准，按比例计算宽度
-  // 720p → h=768（官方推荐默认高度）
-  // 1080p → h=1152
-  const h = resolution === '1080p' ? 1152 : 768;
-
-  const ratioMap = {
-    '16:9': (h * 16 / 9),
-    '9:16': (h * 9 / 16),
-    '1:1':  h,
-    '4:3':  (h * 4 / 3),
-    '3:4':  (h * 3 / 4),
-  };
-  const w = Math.round(ratioMap[ratio] || ratioMap['16:9']);
-  return { w, h };
-}
+// NOTE: agnes-video-2.5-flash uses size/seconds/mode/aspect_ratio (NOT width/height/num_frames)
 
 // ─── Atlas Cloud Video Model Config ─────────────────────────
 const ATLAS_VIDEO_MODELS = {
@@ -1408,7 +1392,7 @@ async function createAtlasVideo() {
 
     state.activeVideoTaskId = predictionId;
     state.videoStartTime = Date.now();
-    showVideoProgress(predictionId, null);
+    showVideoProgress(predictionId);
     startPollAtlasTask(predictionId);
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
@@ -1524,26 +1508,23 @@ async function createVideo() {
   hideResults();
 
   const s = state.settings;
-  const numFrames = calcNumFrames(s.videoDuration, s.videoFps);
-  const dims = getVideoDimensions(s.videoResolution, s.videoRatio || '16:9');
+  const isI2V = state.mode === 'image-to-video';
 
   const payload = {
     model: s.videoModel,
-    prompt: state.prompt,
-    width: dims.w,
-    height: dims.h,
-    num_frames: numFrames,
-    frame_rate: s.videoFps,
+    prompt: isI2V && !state.prompt.includes('<Picture') ? `以 <Picture 1> 为参考，${state.prompt}` : state.prompt,
+    mode: isI2V ? 'reference' : 'text',
+    size: '720P',
+    seconds: String(s.videoDuration || 5),
+    aspect_ratio: s.videoRatio || '16:9',
   };
-  if (s.videoAudio) payload.generate_audio = true;
-
-  // 图生视频: 首帧图片用 image 字段
-  if (state.mode === 'image-to-video' && state.imageBase64) {
-    payload.image = state.imageBase64;
+  if (isI2V && state.imageBase64) {
+    // Flash API accepts image URLs in images[]; we embed base64 data URI directly
+    payload.images = [`data:${state.imageMime || 'image/png'};base64,${state.imageBase64}`];
   }
 
   try {
-    console.log('Creating video:', JSON.stringify({...payload, image: payload.image ? '(base64)' : undefined}));
+    console.log('Creating video:', JSON.stringify({...payload, images: payload.images ? '[data-uri]' : undefined}));
     const result = await callAgnes('/videos', { method: 'POST', body: payload });
     console.log('Video create response:', JSON.stringify(result));
 
@@ -1553,7 +1534,7 @@ async function createVideo() {
 
     state.activeVideoTaskId = queryId;
     state.videoStartTime = Date.now();
-    showVideoProgress(queryId, numFrames);
+    showVideoProgress(queryId);
     startPollTask(queryId);
   } catch(e) {
     state.lastError = { message: e.message || String(e), code: e.code || '', type: 'video', timestamp: Date.now() };
@@ -1586,8 +1567,8 @@ function startPollTask(queryId) {
     }
 
     try {
-      // 官方轮询端点: GET /agnesapi?video_id=xxx（根路径，不在 /v1 下）
-      const result = await callAgnes(`/agnesapi?video_id=${encodeURIComponent(queryId)}`, { method: 'GET', base: AGNES_ROOT });
+      // 官方轮询端点: GET /agnesapi?video_id=xxx&model_name=<创建时的模型>（reference/keyframe 模式必须带 model_name）
+      const result = await callAgnes(`/agnesapi?video_id=${encodeURIComponent(queryId)}&model_name=${encodeURIComponent(state.settings.videoModel)}`, { method: 'GET', base: AGNES_ROOT });
       const status = result.status || result.state;
       const progress = result.progress || 0;
 
@@ -1652,7 +1633,7 @@ function startPollTask(queryId) {
       console.error('Poll error:', e);
       // 网络错误继续轮询
     }
-  }, 5000);
+  }, 2000); // 官方建议每 1–2 秒轮询一次
 
   state.activeVideoTimer = timer;
   $('#btnCancelVideo').onclick = () => {
@@ -1730,30 +1711,21 @@ function renderSettingsGrid() {
         <option value="1:1" ${s.videoRatio==='1:1'?'selected':''}>1:1 (方形)</option>
         <option value="4:3" ${s.videoRatio==='4:3'?'selected':''}>4:3 (传统)</option>
         <option value="3:4" ${s.videoRatio==='3:4'?'selected':''}>3:4 (竖版)</option>
+        <option value="21:9" ${s.videoRatio==='21:9'?'selected':''}>21:9 (超宽)</option>
       </select></div>`;
     html += `<div class="form-group">
       <label class="form-label">分辨率</label>
-      <select class="form-select setting-field" data-key="videoResolution">
-        <option value="720p" ${s.videoResolution==='720p'?'selected':''}>720p</option>
-        <option value="1080p" ${s.videoResolution==='1080p'?'selected':''}>1080p</option>
-      </select></div>`;
+      <input type="text" class="form-input" value="720P（固定）" disabled style="opacity:0.6">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Flash 版本仅支持 720P</div>
+    </div>`;
     html += `<div class="form-group">
       <label class="form-label">时长</label>
       <select class="form-select setting-field" data-key="videoDuration">
+        <option value="4" ${s.videoDuration===4?'selected':''}>4 秒</option>
         <option value="5" ${s.videoDuration===5?'selected':''}>5 秒</option>
+        <option value="8" ${s.videoDuration===8?'selected':''}>8 秒</option>
         <option value="10" ${s.videoDuration===10?'selected':''}>10 秒</option>
-      </select></div>`;
-    html += `<div class="form-group">
-      <label class="form-label">帧率</label>
-      <select class="form-select setting-field" data-key="videoFps">
-        <option value="24" ${s.videoFps===24?'selected':''}>24 fps</option>
-        <option value="30" ${s.videoFps===30?'selected':''}>30 fps</option>
-      </select></div>`;
-    html += `<div class="form-group">
-      <label class="form-label">音频</label>
-      <select class="form-select setting-field" data-key="videoAudio">
-        <option value="false" ${!s.videoAudio?'selected':''}>无音频</option>
-        <option value="true" ${s.videoAudio?'selected':''}>生成音频</option>
+        <option value="12" ${s.videoDuration===12?'selected':''}>12 秒</option>
       </select></div>`;
   }
   grid.innerHTML = html;
@@ -1763,8 +1735,7 @@ function renderSettingsGrid() {
     el.onchange = () => {
       const key = el.dataset.key;
       let val = el.value;
-      if (key === 'videoDuration' || key === 'videoFps' || key === 'imageCount') val = parseInt(val);
-      if (key === 'videoAudio') val = val === 'true';
+      if (key === 'videoDuration') val = parseInt(val);
       state.settings[key] = val;
       saveState(state);
     };
@@ -1913,13 +1884,12 @@ function hideErrorDetail() {
   state.lastError = null;
 }
 
-function showVideoProgress(taskId, numFrames) {
+function showVideoProgress(taskId) {
   const card = $('#videoProgressCard');
   card.classList.remove('hidden');
   $('#progressFill').style.width = '0%';
   $('#progressFill').classList.add('indeterminate');
-  const nfInfo = numFrames ? ` (${numFrames}帧)` : '';
-  $('#videoStatusText').textContent = `⏳ 任务已创建${nfInfo}，等待处理...`;
+  $('#videoStatusText').textContent = `⏳ 任务已创建，等待处理...`;
   $('#videoElapsed').textContent = '0s';
   $('#btnCancelVideo').classList.remove('hidden');
   setTimeout(() => $('#progressFill').classList.remove('indeterminate'), 10000);
@@ -2364,8 +2334,8 @@ $('#clearAll').onclick = () => {
     state.apiKey = '';
     state.settings = {
       imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
-      videoResolution: '720p', videoRatio: '16:9', videoDuration: 5, videoFps: 24, videoAudio: false,
-      imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-v2.0',
+      videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
+      imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-2.5-flash',
     };
     state.proxyMode = 'auto';
     state.customProxyUrl = '';
