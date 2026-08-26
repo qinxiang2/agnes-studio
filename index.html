@@ -297,6 +297,19 @@ img,video{max-width:100%;display:block}
 .toast.error::after{content:' ▾';opacity:0.7;font-size:12px}
 .toast.info{background:var(--accent)}
 
+/* ═══════════════════════════════════════════ Download Progress Bar ═══════════════════════════════════════════ */
+.download-bar{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:300;
+  width:min(320px,86vw);background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:12px 14px;box-shadow:0 4px 24px rgba(0,0,0,0.25);
+  opacity:0;pointer-events:none;transition:opacity 0.3s;
+}
+.download-bar.show{opacity:1}
+.download-bar-text{font-size:13px;color:var(--text);margin-bottom:8px}
+.download-bar-track{height:6px;border-radius:3px;background:var(--surface);overflow:hidden}
+.download-bar-fill{height:100%;width:0%;background:var(--accent);transition:width 0.25s}
+.download-bar-fill.indeterminate{width:30%;animation:indeterminate 1.5s ease-in-out infinite}
+
 /* ═══════════════════════════════════════════ Install Banner ═══════════════════════════════════════════ */
 .install-banner{
   display:none;align-items:center;gap:10px;padding:10px 14px;
@@ -710,6 +723,10 @@ img,video{max-width:100%;display:block}
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+<div class="download-bar" id="downloadBar">
+  <div class="download-bar-text" id="downloadBarText">正在下载...</div>
+  <div class="download-bar-track"><div class="download-bar-fill indeterminate" id="downloadBarFill"></div></div>
+</div>
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════
@@ -1952,14 +1969,36 @@ async function fetchResultBlob(url, onProgress) {
   return new Blob(chunks);
 }
 
+function showDownloadProgress(pct) {
+  const bar = $('#downloadBar');
+  const fill = $('#downloadBarFill');
+  const text = $('#downloadBarText');
+  bar.classList.add('show');
+  if (pct === null) {
+    // 无法获取总大小: 显示不确定进度动画
+    text.textContent = '正在下载，请稍候...';
+    fill.classList.add('indeterminate');
+    fill.style.width = '30%';
+  } else {
+    fill.classList.remove('indeterminate');
+    fill.style.width = pct + '%';
+    text.textContent = `正在下载... ${pct}%`;
+  }
+}
+
+function hideDownloadProgress() {
+  $('#downloadBar').classList.remove('show');
+  $('#downloadBarFill').style.width = '0%';
+}
+
 async function downloadResult(url, filename) {
   const ext = (filename.match(/\.([a-z0-9]+)$/i) || [, 'bin'])[1].toLowerCase();
   const mimeMap = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
   let lastPct = -1;
   const reportProgress = (pct) => {
-    if (pct === null) { showToast('正在下载，请稍候...', 'info'); return; }
+    if (pct === null) { showDownloadProgress(null); return; }
     const step = Math.floor(pct / 5) * 5; // 每 5% 更新一次，避免频繁刷新
-    if (step !== lastPct) { lastPct = step; showToast(`正在下载... ${step}%`, 'info'); }
+    if (step !== lastPct) { lastPct = step; showDownloadProgress(step); }
   };
 
   // 另存为: File System Access API 弹出保存对话框，可自主选择保存目录
@@ -1971,14 +2010,17 @@ async function downloadResult(url, filename) {
         suggestedName: filename,
         types: [{ description: ext.toUpperCase() + ' 文件', accept: { [mimeMap[ext] || 'application/octet-stream']: ['.' + ext] } }],
       });
-      showToast('正在下载...', 'info');
+      showDownloadProgress(null);
       const blob = await fetchResultBlob(url, reportProgress);
+      showDownloadProgress(100);
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
+      hideDownloadProgress();
       showToast('✅ 保存完成！', 'success');
       return;
     } catch(e) {
+      hideDownloadProgress();
       if (e.name === 'AbortError') { showToast('已取消保存', 'info'); return; }
       console.error('Save-as failed:', e);
       // 清理下载失败留下的 0KB 占位文件（仅在文件确实为空时删除，避免误删已选中的原文件）
@@ -1995,7 +2037,9 @@ async function downloadResult(url, filename) {
 
   // 回退: 不支持另存为的浏览器（如 iOS Safari）走默认下载
   try {
+    showDownloadProgress(null);
     const blob = await fetchResultBlob(url, reportProgress);
+    showDownloadProgress(100);
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -2004,8 +2048,10 @@ async function downloadResult(url, filename) {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    hideDownloadProgress();
     showToast('下载完成！', 'success');
   } catch(e) {
+    hideDownloadProgress();
     console.error('Download failed:', e);
     showToast('下载失败：' + (e.message || '网络错误，请重试'), 'error');
   }
