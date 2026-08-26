@@ -247,6 +247,7 @@ img,video{max-width:100%;display:block}
 .task-status.processing{color:var(--warning)}
 .task-card .progress-bar-wrap{height:4px}
 .task-time{font-size:11px;color:var(--text-muted)}
+.task-media-preview{width:100%;border-radius:8px;margin-top:8px;background:#000;max-height:240px;object-fit:contain;display:block}
 
 /* ═══════════════════════════════════════════ Settings Page ═══════════════════════════════════════════ */
 .settings-section{margin-bottom:24px}
@@ -1408,6 +1409,7 @@ function startPollAtlasTask(predictionId) {
   card.classList.remove('hidden');
 
   const timer = setInterval(async () => {
+    if (state.activeVideoTimer !== timer) return; // 任务已由其他轮次处理完成，防止重复写入历史
     const elapsed = Math.floor((Date.now() - state.videoStartTime) / 1000);
     $('#videoElapsed').textContent = `${elapsed}s`;
 
@@ -1425,6 +1427,7 @@ function startPollAtlasTask(predictionId) {
 
     try {
       const result = await callAtlasPoll(predictionId);
+      if (state.activeVideoTimer !== timer) return; // await 期间任务已由其他轮次处理完成
       const data = result.data || result;
       const status = data.status;
 
@@ -1550,6 +1553,7 @@ function startPollTask(queryId) {
   card.classList.remove('hidden');
 
   const timer = setInterval(async () => {
+    if (state.activeVideoTimer !== timer) return; // 任务已由其他轮次处理完成，防止重复写入历史
     const elapsed = Math.floor((Date.now() - state.videoStartTime) / 1000);
     $('#videoElapsed').textContent = `${elapsed}s`;
 
@@ -1569,6 +1573,7 @@ function startPollTask(queryId) {
     try {
       // 官方轮询端点: GET /agnesapi?video_id=xxx&model_name=<创建时的模型>（reference/keyframe 模式必须带 model_name）
       const result = await callAgnes(`/agnesapi?video_id=${encodeURIComponent(queryId)}&model_name=${encodeURIComponent(state.settings.videoModel)}`, { method: 'GET', base: AGNES_ROOT });
+      if (state.activeVideoTimer !== timer) return; // await 期间任务已由其他轮次处理完成
       const status = result.status || result.state;
       const progress = result.progress || 0;
 
@@ -1651,6 +1656,8 @@ function startPollTask(queryId) {
 function addToHistory(results) {
   const tasks = loadTasks();
   results.forEach(r => {
+    // 防重复: 同一结果 URL 已存在历史中则跳过（轮询重叠可能导致重复写入）
+    if (r.url && tasks.some(t => t.url === r.url)) return;
     tasks.unshift({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       type: r.type,
@@ -2493,6 +2500,10 @@ function renderTaskPage() {
         <span class="task-status ${t.status === 'completed' ? 'success' : 'failed'}">${getStatusEmoji(t.status)} ${getStatusName(t.status)}</span>
       </div>
       <div class="task-prompt">${escapeHtml(t.prompt || '')}</div>
+      ${t.status === 'completed' && t.url ? (t.type === 'video'
+        ? `<video src="${t.url}" controls preload="metadata" playsinline class="task-media-preview"></video>`
+        : `<img src="${t.url}" alt="生成结果" loading="lazy" class="task-media-preview" style="background:var(--surface)">`)
+      : ''}
       ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="event.stopPropagation();downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 重新下载</button>` : ''}
       ${t.error ? `<div class="error-detail-body" style="margin-top:8px;max-height:80px;font-size:11px" onclick="event.stopPropagation()">❌ ${escapeHtml(String(t.error))}</div>` : ''}
       <div class="task-time">${new Date(t.timestamp).toLocaleString('zh-CN')}</div>
