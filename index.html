@@ -1903,52 +1903,99 @@ function showVideoProgress(taskId) {
 }
 
 // ─── Download & Share ──────────────────────────────────────
-async function fetchResultBlob(url) {
+async function fetchDownloadResponse(url) {
+  // 直连优先；CORS/网络错误或 403 时依次走代理（先 Workers 流式代理，再 Netlify）
+  try {
+    const resp = await fetch(url);
+    if (resp.ok) return resp;
+    if (resp.status !== 403) throw new Error(`HTTP ${resp.status}`);
+  } catch(e) {
+    if (e.message && e.message.startsWith('HTTP')) throw e; // 非 403 的 HTTP 错误直接抛出
+  }
+  const proxies = [AGNES_PROXY, NETLIFY_PROXY];
+  if (state.customProxyUrl) proxies.push(state.customProxyUrl);
+  let lastErr = null;
+  for (const proxyBase of proxies) {
+    try {
+      const resp = await fetch(proxyBase + encodeURIComponent(url));
+      if (resp.ok) return resp;
+      lastErr = new Error(`HTTP ${resp.status}`);
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error('网络请求失败');
+}
+
+async function fetchResultBlob(url, onProgress) {
   if (url.startsWith('blob:')) {
     const resp = await fetch(url);
     const blob = await resp.blob();
     URL.revokeObjectURL(url);
     return blob;
   }
-  let resp = await fetch(url);
-  // If direct fetch fails (e.g. OSS referer policy), retry via proxy
-  if (!resp.ok && (resp.status === 403 || resp.status === 0)) {
-    const proxyUrl = NETLIFY_PROXY + encodeURIComponent(url);
-    resp = await fetch(proxyUrl);
+  const resp = await fetchDownloadResponse(url);
+  const total = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
+  if (!resp.body || !total) {
+    if (onProgress) onProgress(null); // 拿不到总大小，显示不确定进度
+    return await resp.blob();
   }
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return await resp.blob();
+  // 流式读取，按字节累计计算下载进度
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (onProgress) onProgress(Math.min(99, Math.round(received / total * 100)));
+  }
+  return new Blob(chunks);
 }
 
 async function downloadResult(url, filename) {
-  // 另存为: 优先使用 File System Access API 弹出保存对话框，可自主选择保存目录
+  const ext = (filename.match(/\.([a-z0-9]+)$/i) || [, 'bin'])[1].toLowerCase();
+  const mimeMap = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+  let lastPct = -1;
+  const reportProgress = (pct) => {
+    if (pct === null) { showToast('正在下载，请稍候...', 'info'); return; }
+    const step = Math.floor(pct / 5) * 5; // 每 5% 更新一次，避免频繁刷新
+    if (step !== lastPct) { lastPct = step; showToast(`正在下载... ${step}%`, 'info'); }
+  };
+
+  // 另存为: File System Access API 弹出保存对话框，可自主选择保存目录
   if (window.showSaveFilePicker) {
+    let handle = null;
     try {
-      const ext = (filename.match(/\.([a-z0-9]+)$/i) || [, 'bin'])[1].toLowerCase();
-      const mimeMap = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
-      const mime = mimeMap[ext] || 'application/octet-stream';
       // 必须先弹保存框（需要在用户手势激活期内调用），再下载数据
-      const handle = await window.showSaveFilePicker({
+      handle = await window.showSaveFilePicker({
         suggestedName: filename,
-        types: [{ description: ext.toUpperCase() + ' 文件', accept: { [mime]: ['.' + ext] } }],
+        types: [{ description: ext.toUpperCase() + ' 文件', accept: { [mimeMap[ext] || 'application/octet-stream']: ['.' + ext] } }],
       });
       showToast('正在下载...', 'info');
-      const blob = await fetchResultBlob(url);
+      const blob = await fetchResultBlob(url, reportProgress);
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
-      showToast('已保存！', 'success');
+      showToast('✅ 保存完成！', 'success');
       return;
     } catch(e) {
       if (e.name === 'AbortError') { showToast('已取消保存', 'info'); return; }
-      console.error('Save-as failed, falling back to default download:', e);
+      console.error('Save-as failed:', e);
+      // 清理下载失败留下的 0KB 占位文件（仅在文件确实为空时删除，避免误删已选中的原文件）
+      if (handle) {
+        try {
+          const f = await handle.getFile();
+          if (f.size === 0) await handle.remove();
+        } catch(_) {}
+      }
+      showToast('保存失败：' + (e.message || '网络错误，请重试'), 'error');
+      return;
     }
   }
 
   // 回退: 不支持另存为的浏览器（如 iOS Safari）走默认下载
   try {
-    showToast('正在下载...', 'info');
-    const blob = await fetchResultBlob(url);
+    const blob = await fetchResultBlob(url, reportProgress);
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -1959,10 +2006,8 @@ async function downloadResult(url, filename) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     showToast('下载完成！', 'success');
   } catch(e) {
-    // Fallback: open in new tab, then try proxy
-    const proxyDownloadUrl = NETLIFY_PROXY + encodeURIComponent(url);
-    window.open(proxyDownloadUrl, '_blank');
-    showToast('已在新标签页打开，长按可保存', 'info');
+    console.error('Download failed:', e);
+    showToast('下载失败：' + (e.message || '网络错误，请重试'), 'error');
   }
 }
 
