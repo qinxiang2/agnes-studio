@@ -1168,7 +1168,7 @@ async function translatePromptForFlux(chinesePrompt) {
     const result = await callAgnes('/chat/completions', {
       method: 'POST',
       body: {
-        model: 'agnes-2.0-flash',
+        model: 'agnes-2.5-flash',
         messages: [
           {
             role: 'system',
@@ -1903,24 +1903,52 @@ function showVideoProgress(taskId) {
 }
 
 // ─── Download & Share ──────────────────────────────────────
+async function fetchResultBlob(url) {
+  if (url.startsWith('blob:')) {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    URL.revokeObjectURL(url);
+    return blob;
+  }
+  let resp = await fetch(url);
+  // If direct fetch fails (e.g. OSS referer policy), retry via proxy
+  if (!resp.ok && (resp.status === 403 || resp.status === 0)) {
+    const proxyUrl = NETLIFY_PROXY + encodeURIComponent(url);
+    resp = await fetch(proxyUrl);
+  }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.blob();
+}
+
 async function downloadResult(url, filename) {
+  // 另存为: 优先使用 File System Access API 弹出保存对话框，可自主选择保存目录
+  if (window.showSaveFilePicker) {
+    try {
+      const ext = (filename.match(/\.([a-z0-9]+)$/i) || [, 'bin'])[1].toLowerCase();
+      const mimeMap = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+      const mime = mimeMap[ext] || 'application/octet-stream';
+      // 必须先弹保存框（需要在用户手势激活期内调用），再下载数据
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: ext.toUpperCase() + ' 文件', accept: { [mime]: ['.' + ext] } }],
+      });
+      showToast('正在下载...', 'info');
+      const blob = await fetchResultBlob(url);
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      showToast('已保存！', 'success');
+      return;
+    } catch(e) {
+      if (e.name === 'AbortError') { showToast('已取消保存', 'info'); return; }
+      console.error('Save-as failed, falling back to default download:', e);
+    }
+  }
+
+  // 回退: 不支持另存为的浏览器（如 iOS Safari）走默认下载
   try {
     showToast('正在下载...', 'info');
-    let blob;
-    if (url.startsWith('blob:')) {
-      const resp = await fetch(url);
-      blob = await resp.blob();
-      URL.revokeObjectURL(url);
-    } else {
-      let resp = await fetch(url);
-      // If direct fetch fails (e.g. OSS referer policy), retry via proxy
-      if (!resp.ok && (resp.status === 403 || resp.status === 0)) {
-        const proxyUrl = NETLIFY_PROXY + encodeURIComponent(url);
-        resp = await fetch(proxyUrl);
-      }
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      blob = await resp.blob();
-    }
+    const blob = await fetchResultBlob(url);
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -2043,19 +2071,15 @@ $('#removeImage').onclick = () => {
 };
 
 // ─── Page Navigation ───────────────────────────────────────
-$$('.nav-item').forEach(btn => {
-  btn.onclick = () => {
-    const pageId = btn.dataset.page;
-    state.activePage = pageId;
-    $$('.nav-item').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    $$('.page').forEach(p => p.classList.remove('active'));
-    $(`#${pageId}`).classList.add('active');
-    if (pageId === 'pageTasks') renderTaskPage();
-    if (pageId === 'pageChat') renderChat();
-    if (pageId === 'pageSettings') renderSettingsForm();
-  };
-});
+function switchPage(pageId) {
+  state.activePage = pageId;
+  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === pageId));
+  $$('.page').forEach(p => p.classList.toggle('active', p.id === pageId));
+  if (pageId === 'pageTasks') renderTaskPage();
+  if (pageId === 'pageChat') renderChat();
+  if (pageId === 'pageSettings') renderSettingsForm();
+}
+$$('.nav-item').forEach(btn => { btn.onclick = () => switchPage(btn.dataset.page); });
 
 // ─── Mode Switching ────────────────────────────────────────
 $$('.mode-tab').forEach(tab => {
@@ -2454,6 +2478,57 @@ function deleteSelectedTasks() {
   showToast(`已删除`, 'success');
 }
 
+// ─── Task Reuse (历史记录复用) ──────────────────────────────
+async function reuseTask(taskId) {
+  const tasks = loadTasks();
+  const t = tasks.find(x => x.id === taskId);
+  if (!t) return;
+
+  const mode = t.mode || t.type;
+  const targetMode = ['text-to-image', 'image-to-image', 'text-to-video', 'image-to-video'].includes(mode)
+    ? mode
+    : (t.type === 'video' ? 'text-to-video' : 'image-to-image');
+
+  state.prompt = t.prompt || '';
+  state.mode = targetMode;
+  $$('.mode-tab').forEach(x => x.classList.toggle('active', x.dataset.mode === targetMode));
+
+  // 目标模式需要图片且记录有图片结果时，把图片加载为输入（可直接切到图生视频复用）
+  const needsImage = targetMode === 'image-to-image' || targetMode === 'image-to-video';
+  if (needsImage && t.type === 'image' && t.url) {
+    showToast('正在加载图片...', 'info');
+    try {
+      let resp;
+      try { resp = await fetch(t.url); } catch(e) { resp = await fetch(NETLIFY_PROXY + encodeURIComponent(t.url)); }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const blob = await resp.blob();
+      const dataUri = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error('read failed'));
+        fr.readAsDataURL(blob);
+      });
+      const commaIdx = dataUri.indexOf(',');
+      const header = dataUri.slice(0, commaIdx);
+      const mimeMatch = header.match(/data:(.+);base64/);
+      state.imageMime = mimeMatch ? mimeMatch[1] : (blob.type || 'image/png');
+      state.imageBase64 = dataUri.slice(commaIdx + 1);
+      state.imageFileName = 'reuse_' + t.id + '.' + ((state.imageMime || 'png').split('/')[1] || 'png');
+      $('#previewImg').src = dataUri;
+      $('#imagePreview').classList.add('show');
+    } catch(e) {
+      console.error('Reuse image load failed:', e);
+      showToast('图片加载失败，请手动重新上传', 'error');
+    }
+  }
+
+  switchPage('pageGenerate');
+  $('#promptInput').value = state.prompt;
+  updateModeUI();
+  renderSettingsGrid();
+  showToast('已引用到生成页，可修改后重新生成', 'success');
+}
+
 // ─── Task Page ──────────────────────────────────────────────
 function renderTaskPage() {
   const tasks = loadTasks();
@@ -2504,7 +2579,10 @@ function renderTaskPage() {
         ? `<video src="${t.url}" controls preload="metadata" playsinline class="task-media-preview"></video>`
         : `<img src="${t.url}" alt="生成结果" loading="lazy" class="task-media-preview" style="background:var(--surface)">`)
       : ''}
-      ${t.status === 'completed' && t.url ? `<button class="btn-small mt-8" onclick="event.stopPropagation();downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">⬇ 重新下载</button>` : ''}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        ${t.status === 'completed' && t.url ? `<button class="btn-small" style="flex:1" onclick="event.stopPropagation();downloadResult('${t.url}','${t.type==='video'?'video':'image'}_${t.id}.${t.type==='video'?'mp4':'png'}')">💾 另存为</button>` : ''}
+        <button class="btn-small" style="flex:1" onclick="event.stopPropagation();reuseTask('${t.id}')">🔄 复用</button>
+      </div>
       ${t.error ? `<div class="error-detail-body" style="margin-top:8px;max-height:80px;font-size:11px" onclick="event.stopPropagation()">❌ ${escapeHtml(String(t.error))}</div>` : ''}
       <div class="task-time">${new Date(t.timestamp).toLocaleString('zh-CN')}</div>
     </div>
@@ -2833,7 +2911,7 @@ async function sendChatMessage(text) {
     ];
     const result = await callAgnes('/chat/completions', {
       method: 'POST',
-      body: { model: 'agnes-2.0-flash', messages: msgs, temperature: 0.7, max_tokens: 2048 },
+      body: { model: 'agnes-2.5-flash', messages: msgs, temperature: 0.7, max_tokens: 2048 },
     });
     const reply = result.choices?.[0]?.message?.content || '（未收到回复）';
     conv.messages.push({ role: 'assistant', content: reply });
