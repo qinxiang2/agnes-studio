@@ -806,10 +806,10 @@ function obscure(str) { return str ? btoa(str.split('').reverse().join('')) : ''
 function clarify(str) { try { return atob(str).split('').reverse().join(''); } catch(e) { return str; } }
 
 // ─── API layer ─────────────────────────────────────────────
-const AGNES_BASE = 'https://apihub.agnes-ai.com/v1';
-const AGNES_ROOT = 'https://apihub.agnes-ai.com';
-const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?';
-const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?';
+const AGNES_BASE = 'https://api.agnes-ai.cn/v1';
+const AGNES_ROOT = 'https://api.agnes-ai.cn';
+const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?url=';
+const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?url=';
 const CORS_PROXIES = [
   AGNES_PROXY,
   NETLIFY_PROXY,
