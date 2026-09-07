@@ -776,8 +776,8 @@ const state = {
   settings: Object.assign({
     imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
     videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
-    imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-2.5-flash',
-  }, saved.settings || {}),
+    imageModel: 'agnes-image-2.5-flash', videoModel: 'agnes-video-2.5-flash',
+    }, saved.settings || {}),
   proxyMode: saved.proxyMode || 'auto',
   customProxyUrl: saved.customProxyUrl || '',
   imageProvider: saved.imageProvider || 'agnes',
@@ -1291,7 +1291,7 @@ async function generateImage() {
       response_format: 'url',  // 文生图 URL 输出 — 必须放在 extra_body 内部
     },
   };
-  // 注: agnes-image-2.1-flash 不支持 style/quality/n 参数，已移除
+  // 注: agnes-image-2.x-flash 系列均不支持 style/quality/n 参数，已移除
 
   // 图生图: 在 extra_body.image 中传入图片数组
   if (state.mode === 'image-to-image' && state.imageBase64) {
@@ -2301,7 +2301,7 @@ $('#testConnection').onclick = async () => {
   try {
     await callAgnes('/images/generations', {
       method: 'POST',
-      body: { model: state.settings.imageModel, prompt: 'test', n: 1, size: '256x256' },
+      body: { model: state.settings.imageModel, prompt: 'test', size: '1K', ratio: '1:1' },
       apiKey: key,
     });
     $('#testResult').innerHTML = '<span style="color:var(--success)">✅ 连接成功</span>';
@@ -2457,7 +2457,7 @@ $('#clearAll').onclick = () => {
     state.settings = {
       imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
       videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
-      imageModel: 'agnes-image-2.1-flash', videoModel: 'agnes-video-2.5-flash',
+      imageModel: 'agnes-image-2.5-flash', videoModel: 'agnes-video-2.5-flash'
     };
     state.proxyMode = 'auto';
     state.customProxyUrl = '';
