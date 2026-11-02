@@ -1,5 +1,5 @@
 // Agnes AI Studio - Service Worker
-const CACHE_NAME = 'agnes-studio-v32';
+const CACHE_NAME = 'agnes-studio-v33';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -26,27 +26,21 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: cache-first for static, network-only for API
+// Fetch: cache-first for same-origin static, network-only for everything else
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Network-only for Agnes API calls
-  if (url.hostname === 'apihub.agnes-ai.com') {
-    return; // Don't intercept API calls
+  // 只接管同源 GET 请求。跨域请求（Agnes/Atlas/Replicate API、结果媒体 CDN）
+  // 全部直接走网络：缓存 API 轮询会返回过期进度，缓存大视频也会无限占用空间。
+  if (event.request.method !== 'GET') {
+    return;
+  }
+  if (url.origin !== self.location.origin) {
+    return;
   }
 
   // Network-only for CORS proxy
   if (url.pathname.includes('proxy')) {
-    return;
-  }
-
-  // Network-only for Replicate API
-  if (url.hostname === 'api.replicate.com') {
-    return;
-  }
-
-  // Network-only for Atlas Cloud API
-  if (url.hostname === 'api.atlascloud.ai') {
     return;
   }
 

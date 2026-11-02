@@ -18,9 +18,18 @@ export default {
     }
 
     const url = new URL(request.url);
-    // 从 query string 解析目标 URL
-    // 格式: https://proxy.workers.dev/?https://api.example.com/path?params
-    const targetUrl = decodeURIComponent(url.search.slice(1));
+    // 从 query string 解析目标 URL。支持两种格式：
+    //   .../?<encoded>       当前客户端/线上部署格式
+    //   .../?url=<encoded>   兼容 ?url= 形式的代理
+    let targetUrl = url.searchParams.get('url') || '';
+    if (!targetUrl) {
+      try {
+        const legacy = decodeURIComponent(url.search.slice(1));
+        if (legacy.startsWith('http')) targetUrl = legacy;
+      } catch (e) {
+        targetUrl = '';
+      }
+    }
     if (!targetUrl || !targetUrl.startsWith('http')) {
       return new Response(JSON.stringify({
         error: { status: 400, message: 'Missing or invalid target URL in query string' }

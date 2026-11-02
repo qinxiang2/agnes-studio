@@ -759,7 +759,16 @@ function saveState(s) {
 function loadTasks() {
   try {
     const raw = localStorage.getItem(TASK_HISTORY_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const tasks = JSON.parse(raw);
+      if (!Array.isArray(tasks)) return [];
+      // 清理旧版本遗留的 blob: URL 记录：页面刷新后它们必然失效
+      const alive = tasks.filter(t => !(t && typeof t.url === 'string' && t.url.startsWith('blob:')));
+      if (alive.length !== tasks.length) {
+        try { saveTasks(alive); } catch(e) {}
+      }
+      return alive;
+    }
   } catch(e) {}
   return [];
 }
@@ -810,12 +819,21 @@ function clarify(str) { try { return atob(str).split('').reverse().join(''); } c
 // ─── API layer ─────────────────────────────────────────────
 const AGNES_BASE = 'https://api.agnes-ai.cn/v1';
 const AGNES_ROOT = 'https://api.agnes-ai.cn';
-const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?url=';
-const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?url=';
+// 线上代理目前使用 "...?<encoded>" 形式；自定义代理可写成 "...?url=" 或裸地址
+const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?';
+const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?';
 const CORS_PROXIES = [
   AGNES_PROXY,
   NETLIFY_PROXY,
 ];
+
+// 兼容两种代理约定: "...?url=<encoded>" 和 "...?<encoded>"
+function buildProxyUrl(proxyBase, targetUrl) {
+  const encoded = encodeURIComponent(targetUrl);
+  if (/[?&]url=$/.test(proxyBase)) return proxyBase + encoded;
+  if (proxyBase.endsWith('?')) return proxyBase + encoded;
+  return proxyBase + (proxyBase.includes('?') ? '&' : '?') + 'url=' + encoded;
+}
 
 async function callAgnes(endpoint, options = {}) {
   const { method = 'GET', body = null, apiKey = state.apiKey, base = AGNES_BASE } = options;
@@ -857,7 +875,7 @@ async function callAgnes(endpoint, options = {}) {
     const proxies = state.customProxyUrl ? [state.customProxyUrl] : CORS_PROXIES;
     for (const proxyBase of proxies) {
       try {
-        const proxyUrl = proxyBase + encodeURIComponent(url);
+        const proxyUrl = buildProxyUrl(proxyBase, url);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 
@@ -909,8 +927,8 @@ async function callReplicate(payload) {
   // Proxy chain: direct → CF Worker → Netlify
   const PROXIES = [
     { name: 'direct', url: targetUrl, direct: true },
-    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
-    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'workers', url: buildProxyUrl(AGNES_PROXY, targetUrl), direct: false },
+    { name: 'netlify', url: buildProxyUrl(NETLIFY_PROXY, targetUrl), direct: false },
   ];
 
   let lastNetworkError = null;
@@ -964,7 +982,7 @@ async function callAtlasPoll(predictionId) {
   // GET is idempotent — proxy retry is safe
   const PROXIES = [
     { name: 'direct', url: targetUrl, direct: true },
-    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'netlify', url: buildProxyUrl(NETLIFY_PROXY, targetUrl), direct: false },
   ];
   let lastNetworkError = null;
   for (const proxy of PROXIES) {
@@ -990,16 +1008,17 @@ const ATLAS_IMAGE_MODELS = {
     i2i: 'black-forest-labs/flux-2-pro/text-to-image',
     name: 'Flux 2 Pro',
     needTranslation: true,
-    t2iParams: { enable_base64_output: true },
-    i2iParams: { enable_base64_output: true },
+    // 返回 URL 而不是 base64：URL 才能在刷新后继续用于历史记录/下载
+    t2iParams: {},
+    i2iParams: {},
   },
   'atlascloud-seedream': {
     t2i: 'bytedance/seedream-v5.0-pro/text-to-image',
     i2i: 'bytedance/seedream-v5.0-pro/edit',
     name: 'Seedream 5.0 Pro',
     needTranslation: false,
-    t2iParams: { thinking: 'enabled', enable_base64_output: true },
-    i2iParams: { enable_base64_output: true },
+    t2iParams: { thinking: 'enabled' },
+    i2iParams: {},
   },
 };
 
@@ -1033,7 +1052,7 @@ async function pollAtlasImage(predictionId) {
     return await res.json();
   } catch(e) {
     if (e.isApiError || (e.code && e.code >= 400)) throw e;
-    const proxyUrl = NETLIFY_PROXY + encodeURIComponent(targetUrl);
+    const proxyUrl = buildProxyUrl(NETLIFY_PROXY, targetUrl);
     const res2 = await fetch(proxyUrl, { method: 'GET', headers: { ...headers, 'x-requested-with': 'agnes-studio' } });
     if (!res2.ok) throw { code: res2.status, message: `HTTP ${res2.status}`, isApiError: true };
     return await res2.json();
@@ -1113,12 +1132,11 @@ async function generateAtlasImage() {
         const outputs = result.data?.outputs || [];
         if (!outputs.length) throw new Error('Atlas Cloud 返回了空结果');
         state.results = outputs.map((output, i) => {
-          // Handle base64 output (from enable_base64_output) vs URL
-          let url, blobUrl;
+          // URL 输出才可持久化；base64 输出只用于本次会话显示，不写入历史
+          let url = '', blobUrl = '';
           if (typeof output === 'string' && (output.startsWith('data:') || !output.startsWith('http'))) {
             // Base64 data — convert to blob URL for local use
             blobUrl = base64ToBlobUrl(output);
-            url = blobUrl;
           } else {
             url = output;
             blobUrl = output;
@@ -1675,14 +1693,18 @@ function startPollTask(queryId) {
 function addToHistory(results) {
   const tasks = loadTasks();
   results.forEach(r => {
+    // 只持久化刷新后仍可访问的 URL。blob: URL 在页面关闭后就失效，
+    // 写入 localStorage 会产生无法预览/下载/复用的死记录。
+    const historyUrl = (r.url && !String(r.url).startsWith('blob:')) ? r.url : '';
+    if (!historyUrl) return;
     // 防重复: 同一结果 URL 已存在历史中则跳过（轮询重叠可能导致重复写入）
-    if (r.url && tasks.some(t => t.url === r.url)) return;
+    if (tasks.some(t => t.url === historyUrl)) return;
     tasks.unshift({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       type: r.type,
       prompt: r.prompt,
-      url: r.url || r.blobUrl,
-      blobUrl: r.blobUrl,
+      url: historyUrl,
+      blobUrl: '',
       status: 'completed',
       timestamp: r.timestamp || Date.now(),
       mode: state.mode,
@@ -1936,7 +1958,7 @@ async function fetchDownloadResponse(url) {
   let lastErr = null;
   for (const proxyBase of proxies) {
     try {
-      const resp = await fetch(proxyBase + encodeURIComponent(url));
+      const resp = await fetch(buildProxyUrl(proxyBase, url));
       if (resp.ok) return resp;
       lastErr = new Error(`HTTP ${resp.status}`);
     } catch(e) { lastErr = e; }
@@ -1946,10 +1968,10 @@ async function fetchDownloadResponse(url) {
 
 async function fetchResultBlob(url, onProgress) {
   if (url.startsWith('blob:')) {
+    // 不要 revoke：同一个 blob URL 仍被结果网格/灯箱/历史复用，
+    // revoke 后预览和再次下载都会失败。页面关闭时浏览器会自动回收。
     const resp = await fetch(url);
-    const blob = await resp.blob();
-    URL.revokeObjectURL(url);
-    return blob;
+    return await resp.blob();
   }
   const resp = await fetchDownloadResponse(url);
   const total = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
@@ -2592,7 +2614,7 @@ async function reuseTask(taskId) {
     showToast('正在加载图片...', 'info');
     try {
       let resp;
-      try { resp = await fetch(t.url); } catch(e) { resp = await fetch(NETLIFY_PROXY + encodeURIComponent(t.url)); }
+      try { resp = await fetch(t.url); } catch(e) { resp = await fetch(buildProxyUrl(NETLIFY_PROXY, t.url)); }
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const blob = await resp.blob();
       const dataUri = await new Promise((resolve, reject) => {

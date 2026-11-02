@@ -18,24 +18,24 @@ exports.handler = async (event) => {
     };
   }
 
-  // 从 URL 解析目标 URL
-  // 格式: https://proxy.netlify.app/.netlify/functions/proxy?https://api.example.com/path
+  // 从 URL 解析目标 URL。支持两种格式：
+  //   .../proxy?<encoded>       当前客户端/线上部署格式
+  //   .../proxy?url=<encoded>   兼容 ?url= 形式的代理
   let targetUrl = '';
-  try {
-    const rawUrl = event.rawUrl || '';
-    const qIndex = rawUrl.indexOf('?');
-    if (qIndex >= 0) {
-      targetUrl = decodeURIComponent(rawUrl.slice(qIndex + 1));
-    }
-  } catch (e) {
-    targetUrl = '';
+  const params = event.queryStringParameters || {};
+  if (params.url && typeof params.url === 'string') {
+    targetUrl = params.url;
   }
-
-  // Fallback: try queryStringParameters
-  if (!targetUrl && event.queryStringParameters) {
-    const keys = Object.keys(event.queryStringParameters);
-    if (keys.length > 0 && keys[0].startsWith('http')) {
-      targetUrl = keys[0];
+  if (!targetUrl) {
+    try {
+      const rawUrl = event.rawUrl || '';
+      const qIndex = rawUrl.indexOf('?');
+      if (qIndex >= 0) {
+        const candidate = decodeURIComponent(rawUrl.slice(qIndex + 1));
+        if (candidate.startsWith('http')) targetUrl = candidate;
+      }
+    } catch (e) {
+      targetUrl = '';
     }
   }
 
