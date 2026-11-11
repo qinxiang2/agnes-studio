@@ -572,7 +572,28 @@ img,video{max-width:100%;display:block}
         <option value="atlascloud-seedream">Seedream 5.0 Pro（Atlas Cloud · 直连 · 无审查 · 最强写实）</option>
         <option value="atlascloud-flux2">Flux 2 Pro（Atlas Cloud · 直连 · 无审查）</option>
         <option value="replicate">FLUX.1 Pro（Replicate · 需代理）</option>
+        <option value="workersai">Cloudflare Workers AI（免费额度）</option>
       </select>
+    </div>
+    <div class="form-group" id="workersAiGroup" style="display:none">
+      <label class="form-label">Workers AI 接口地址</label>
+      <input type="text" class="form-input" id="workersAiUrl" placeholder="https://agnes-proxy.qinxiang2.workers.dev/ai-image">
+      <label class="form-label" style="margin-top:8px">访问密钥（可选）</label>
+      <div class="api-key-wrap">
+        <input type="password" class="form-input" id="workersAiKeyInput" placeholder="x-app-key">
+        <button class="btn-secondary" id="toggleWorkersAiKeyVis" style="flex-shrink:0">👁</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-secondary" id="saveWorkersAiKey">保存</button>
+      </div>
+      <label class="form-label" style="margin-top:8px">模型</label>
+      <select class="form-select" id="workersAiModel">
+        <option value="@cf/black-forest-labs/flux-1-schnell">FLUX.1 Schnell（推荐，最省免费额度）</option>
+        <option value="@cf/stabilityai/stable-diffusion-xl-base-1.0">SDXL Base 1.0（支持图生图）</option>
+      </select>
+      <label class="form-label" style="margin-top:8px">步数</label>
+      <input type="number" class="form-input" id="workersAiSteps" min="1" max="20" value="4">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">每天 10,000 Neurons 免费额度；FLUX Schnell 约 57.6 Neurons/张。结果仅在本次会话保留，不写入历史。</div>
     </div>
     <div class="form-group" id="replicateKeyGroup" style="display:none">
       <label class="form-label">Replicate API Key</label>
@@ -591,8 +612,10 @@ img,video{max-width:100%;display:block}
       <select class="form-select" id="videoProvider">
         <option value="agnes">Agnes AI（默认）</option>
         <option value="atlascloud-seedance2">Seedance 2.0（Atlas Cloud · 全球可用 · T2V+I2V）</option>
-        <option value="atlascloud-seedance15spicy">Seedance 1.5 Pro Spicy（Atlas Cloud · 便宜 · 有地区限制）</option>
-        <option value="atlascloud-wan27spicy">Wan 2.7 Spicy（Atlas Cloud · 无审查 I2V）</option>
+        <option value="atlascloud-wan3">Wan 3.0（Atlas Cloud · $0.04/次 · 质量最强 · 最长 30s）</option>
+        <option value="atlascloud-wan26flash">Wan 2.6 Flash（Atlas Cloud · $0.018/次 · 最便宜）</option>
+        <option value="atlascloud-seedance15spicy">Seedance 1.5 Pro Spicy（⚠️ 需 Atlas 授权 · 仅 I2V）</option>
+        <option value="atlascloud-wan27spicy">Wan 2.7 Spicy（⚠️ 需 Atlas 授权 · 仅 I2V）</option>
       </select>
     </div>
     <div class="form-group" id="atlasCloudKeyGroup" style="display:none">
@@ -752,14 +775,23 @@ function loadState() {
 }
 
 function saveState(s) {
-  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl, imageProvider: s.imageProvider, videoProvider: s.videoProvider, replicateKey: s.replicateKey, atlasCloudKey: s.atlasCloudKey };
+  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl, imageProvider: s.imageProvider, videoProvider: s.videoProvider, replicateKey: s.replicateKey, atlasCloudKey: s.atlasCloudKey, workersAiUrl: s.workersAiUrl, workersAiKey: s.workersAiKey };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 
 function loadTasks() {
   try {
     const raw = localStorage.getItem(TASK_HISTORY_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const tasks = JSON.parse(raw);
+      if (!Array.isArray(tasks)) return [];
+      // 清理旧版本遗留的 blob: URL 记录：页面刷新后它们必然失效
+      const alive = tasks.filter(t => !(t && typeof t.url === 'string' && t.url.startsWith('blob:')));
+      if (alive.length !== tasks.length) {
+        try { saveTasks(alive); } catch(e) {}
+      }
+      return alive;
+    }
   } catch(e) {}
   return [];
 }
@@ -779,6 +811,7 @@ const state = {
     imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
     videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
     imageModel: 'agnes-image-2.5-flash', videoModel: 'agnes-video-2.5-flash',
+    workersAiModel: '@cf/black-forest-labs/flux-1-schnell', workersAiSteps: 4,
     }, saved.settings || {}),
   proxyMode: saved.proxyMode || 'auto',
   customProxyUrl: saved.customProxyUrl || '',
@@ -786,6 +819,8 @@ const state = {
   videoProvider: saved.videoProvider || 'agnes',
   replicateKey: saved.replicateKey || '',
   atlasCloudKey: saved.atlasCloudKey || '',
+  workersAiUrl: saved.workersAiUrl || 'https://agnes-proxy.qinxiang2.workers.dev/ai-image',
+  workersAiKey: saved.workersAiKey || '',
   isGenerating: false,
   results: [],
   lastError: null,          // {message, code, type, timestamp}
@@ -810,12 +845,21 @@ function clarify(str) { try { return atob(str).split('').reverse().join(''); } c
 // ─── API layer ─────────────────────────────────────────────
 const AGNES_BASE = 'https://api.agnes-ai.cn/v1';
 const AGNES_ROOT = 'https://api.agnes-ai.cn';
-const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?url=';
-const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?url=';
+// 线上代理目前使用 "...?<encoded>" 形式；自定义代理可写成 "...?url=" 或裸地址
+const AGNES_PROXY = 'https://agnes-proxy.qinxiang2.workers.dev/?';
+const NETLIFY_PROXY = 'https://agnes-proxy.netlify.app/.netlify/functions/proxy?';
 const CORS_PROXIES = [
   AGNES_PROXY,
   NETLIFY_PROXY,
 ];
+
+// 兼容两种代理约定: "...?url=<encoded>" 和 "...?<encoded>"
+function buildProxyUrl(proxyBase, targetUrl) {
+  const encoded = encodeURIComponent(targetUrl);
+  if (/[?&]url=$/.test(proxyBase)) return proxyBase + encoded;
+  if (proxyBase.endsWith('?')) return proxyBase + encoded;
+  return proxyBase + (proxyBase.includes('?') ? '&' : '?') + 'url=' + encoded;
+}
 
 async function callAgnes(endpoint, options = {}) {
   const { method = 'GET', body = null, apiKey = state.apiKey, base = AGNES_BASE } = options;
@@ -857,7 +901,7 @@ async function callAgnes(endpoint, options = {}) {
     const proxies = state.customProxyUrl ? [state.customProxyUrl] : CORS_PROXIES;
     for (const proxyBase of proxies) {
       try {
-        const proxyUrl = proxyBase + encodeURIComponent(url);
+        const proxyUrl = buildProxyUrl(proxyBase, url);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 
@@ -909,8 +953,8 @@ async function callReplicate(payload) {
   // Proxy chain: direct → CF Worker → Netlify
   const PROXIES = [
     { name: 'direct', url: targetUrl, direct: true },
-    { name: 'workers', url: AGNES_PROXY + encodeURIComponent(targetUrl), direct: false },
-    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'workers', url: buildProxyUrl(AGNES_PROXY, targetUrl), direct: false },
+    { name: 'netlify', url: buildProxyUrl(NETLIFY_PROXY, targetUrl), direct: false },
   ];
 
   let lastNetworkError = null;
@@ -964,7 +1008,7 @@ async function callAtlasPoll(predictionId) {
   // GET is idempotent — proxy retry is safe
   const PROXIES = [
     { name: 'direct', url: targetUrl, direct: true },
-    { name: 'netlify', url: NETLIFY_PROXY + encodeURIComponent(targetUrl), direct: false },
+    { name: 'netlify', url: buildProxyUrl(NETLIFY_PROXY, targetUrl), direct: false },
   ];
   let lastNetworkError = null;
   for (const proxy of PROXIES) {
@@ -990,16 +1034,17 @@ const ATLAS_IMAGE_MODELS = {
     i2i: 'black-forest-labs/flux-2-pro/text-to-image',
     name: 'Flux 2 Pro',
     needTranslation: true,
-    t2iParams: { enable_base64_output: true },
-    i2iParams: { enable_base64_output: true },
+    // 返回 URL 而不是 base64：URL 才能在刷新后继续用于历史记录/下载
+    t2iParams: {},
+    i2iParams: {},
   },
   'atlascloud-seedream': {
     t2i: 'bytedance/seedream-v5.0-pro/text-to-image',
     i2i: 'bytedance/seedream-v5.0-pro/edit',
     name: 'Seedream 5.0 Pro',
     needTranslation: false,
-    t2iParams: { thinking: 'enabled', enable_base64_output: true },
-    i2iParams: { enable_base64_output: true },
+    t2iParams: { thinking: 'enabled' },
+    i2iParams: {},
   },
 };
 
@@ -1033,7 +1078,7 @@ async function pollAtlasImage(predictionId) {
     return await res.json();
   } catch(e) {
     if (e.isApiError || (e.code && e.code >= 400)) throw e;
-    const proxyUrl = NETLIFY_PROXY + encodeURIComponent(targetUrl);
+    const proxyUrl = buildProxyUrl(NETLIFY_PROXY, targetUrl);
     const res2 = await fetch(proxyUrl, { method: 'GET', headers: { ...headers, 'x-requested-with': 'agnes-studio' } });
     if (!res2.ok) throw { code: res2.status, message: `HTTP ${res2.status}`, isApiError: true };
     return await res2.json();
@@ -1113,12 +1158,11 @@ async function generateAtlasImage() {
         const outputs = result.data?.outputs || [];
         if (!outputs.length) throw new Error('Atlas Cloud 返回了空结果');
         state.results = outputs.map((output, i) => {
-          // Handle base64 output (from enable_base64_output) vs URL
-          let url, blobUrl;
+          // URL 输出才可持久化；base64 输出只用于本次会话显示，不写入历史
+          let url = '', blobUrl = '';
           if (typeof output === 'string' && (output.startsWith('data:') || !output.startsWith('http'))) {
             // Base64 data — convert to blob URL for local use
             blobUrl = base64ToBlobUrl(output);
-            url = blobUrl;
           } else {
             url = output;
             blobUrl = output;
@@ -1264,6 +1308,110 @@ async function generateReplicateImage() {
   }
 }
 
+// ─── Cloudflare Workers AI 生图 ────────────────────────────
+async function generateWorkersAIImage() {
+  if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
+  if (state.mode === 'image-to-image' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
+  if (!state.workersAiUrl) { showToast('请先在设置中填写 Workers AI 接口地址', 'error'); return; }
+
+  const isI2I = state.mode === 'image-to-image' && !!state.imageBase64;
+  const model = state.settings.workersAiModel || '@cf/black-forest-labs/flux-1-schnell';
+  if (isI2I && model.includes('flux-1-schnell')) {
+    showToast('FLUX.1 Schnell 不支持图生图，请在设置中切换到 SDXL Base', 'error');
+    return;
+  }
+
+  state.isGenerating = true;
+  renderGenerateBtn();
+  hideResults();
+
+  let prompt = state.prompt;
+  if (hasChinese(prompt) && state.apiKey) {
+    showToast('🔤 正在翻译为英文...', 'info');
+    prompt = await translatePromptForFlux(prompt);
+  }
+
+  const payload = {
+    prompt,
+    model,
+    steps: Number(state.settings.workersAiSteps) || 4,
+  };
+  if (model.includes('stable-diffusion-xl')) {
+    const dims = {
+      '1:1': [1024, 1024], '4:3': [1152, 864], '3:4': [864, 1152],
+      '16:9': [1344, 768], '9:16': [768, 1344], '3:2': [1200, 800],
+      '2:3': [800, 1200], '21:9': [1536, 640],
+    };
+    const [w, h] = dims[state.settings.imageRatio] || [1024, 1024];
+    payload.width = w;
+    payload.height = h;
+  }
+  if (isI2I) {
+    payload.image_base64 = state.imageBase64;
+    payload.strength = 0.6;
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.workersAiKey) headers['x-app-key'] = state.workersAiKey;
+
+  try {
+    const requestBody = JSON.stringify(payload);
+    let res;
+    try {
+      res = await fetch(state.workersAiUrl, {
+        method: 'POST',
+        headers,
+        body: requestBody,
+      });
+    } catch (networkError) {
+      if (state.proxyMode === 'direct') throw networkError;
+      // workers.dev 在部分网络不可达时，通过 Netlify 代理转发到 Worker
+      res = await fetch(buildProxyUrl(NETLIFY_PROXY, state.workersAiUrl), {
+        method: 'POST',
+        headers,
+        body: requestBody,
+      });
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      let msg = text;
+      try {
+        const j = JSON.parse(text);
+        msg = j.error || j.message || text;
+      } catch(e) {}
+      throw { code: res.status, message: msg || `HTTP ${res.status}`, isApiError: true };
+    }
+
+    const blob = await res.blob();
+    if (!blob.size) throw new Error('Workers AI 返回了空图片');
+    const blobUrl = URL.createObjectURL(blob);
+
+    state.results = [{
+      type: 'image',
+      url: '', // Workers AI 不提供持久 URL
+      blobUrl,
+      blob: null,
+      mimeType: blob.type || 'image/png',
+      index: 0,
+      prompt,
+      originalPrompt: prompt !== state.prompt ? state.prompt : null,
+      timestamp: Date.now(),
+    }];
+    renderResults();
+    state.lastError = null;
+    hideErrorDetail();
+    showToast('Cloudflare Workers AI 生成完成', 'success');
+  } catch(e) {
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
+    showErrorDetail();
+    showToast('Workers AI 生成失败', 'error');
+  } finally {
+    state.isGenerating = false;
+    renderGenerateBtn();
+  }
+}
+
 async function generateImage() {
   if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
   if (state.mode === 'image-to-image' && !state.imageBase64) { showToast('请选择一张图片', 'error'); return; }
@@ -1276,6 +1424,10 @@ async function generateImage() {
   if (state.imageProvider === 'replicate') {
     if (!state.replicateKey) { showToast('请先在设置中输入 Replicate API Key', 'error'); return; }
     return generateReplicateImage();
+  }
+  if (state.imageProvider === 'workersai') {
+    if (!state.workersAiUrl) { showToast('请先在设置中填写 Workers AI 接口地址', 'error'); return; }
+    return generateWorkersAIImage();
   }
 
   state.isGenerating = true;
@@ -1352,12 +1504,27 @@ const ATLAS_VIDEO_MODELS = {
     hasAudio: true,
     maxDuration: 15,
   },
+  'atlascloud-wan3': {
+    t2v: 'alibaba/wan-3.0/text-to-video',
+    i2v: 'alibaba/wan-3.0/image-to-video',
+    name: 'Wan 3.0',
+    hasAudio: true,
+    maxDuration: 30,
+  },
+  'atlascloud-wan26flash': {
+    t2v: 'alibaba/wan-2.6/text-to-video',
+    i2v: 'alibaba/wan-2.6/image-to-video-flash',
+    name: 'Wan 2.6 Flash',
+    hasAudio: false,
+    maxDuration: 10,
+  },
   'atlascloud-seedance15spicy': {
-    t2v: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
+    t2v: null,
     i2v: 'bytedance/seedance-v1.5-pro/image-to-video-spicy',
     name: 'Seedance 1.5 Pro Spicy',
     hasAudio: false,
     maxDuration: 5,
+    requiresAuth: true,
   },
   'atlascloud-wan27spicy': {
     t2v: null,
@@ -1365,6 +1532,7 @@ const ATLAS_VIDEO_MODELS = {
     name: 'Wan 2.7 Spicy',
     hasAudio: false,
     maxDuration: 15,
+    requiresAuth: true,
   },
 };
 
@@ -1675,14 +1843,18 @@ function startPollTask(queryId) {
 function addToHistory(results) {
   const tasks = loadTasks();
   results.forEach(r => {
+    // 只持久化刷新后仍可访问的 URL。blob: URL 在页面关闭后就失效，
+    // 写入 localStorage 会产生无法预览/下载/复用的死记录。
+    const historyUrl = (r.url && !String(r.url).startsWith('blob:')) ? r.url : '';
+    if (!historyUrl) return;
     // 防重复: 同一结果 URL 已存在历史中则跳过（轮询重叠可能导致重复写入）
-    if (r.url && tasks.some(t => t.url === r.url)) return;
+    if (tasks.some(t => t.url === historyUrl)) return;
     tasks.unshift({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       type: r.type,
       prompt: r.prompt,
-      url: r.url || r.blobUrl,
-      blobUrl: r.blobUrl,
+      url: historyUrl,
+      blobUrl: '',
       status: 'completed',
       timestamp: r.timestamp || Date.now(),
       mode: state.mode,
@@ -1801,13 +1973,15 @@ function renderResults() {
       </div>`;
   } else {
     state.results.forEach((r, i) => {
+      const mime = r.mimeType || 'image/png';
+      const ext = (mime.includes('jpeg') || mime.includes('jpg')) ? 'jpg' : (mime.includes('webp') ? 'webp' : 'png');
       const card = document.createElement('div');
       card.className = 'result-card';
       card.innerHTML = `
         <img src="${r.blobUrl || r.url}" alt="Result ${i+1}" loading="lazy" onclick="openLightbox('${r.blobUrl || r.url}','image')">
         <div class="result-card-actions">
-          <button class="btn-download" data-url="${r.blobUrl || r.url}" data-filename="agnes_${Date.now()}_${i}.png">⬇</button>
-          <button class="btn-share" data-url="${r.blobUrl || r.url}" data-filename="agnes_${Date.now()}_${i}.png" data-mime="image/png">↗</button>
+          <button class="btn-download" data-url="${r.blobUrl || r.url}" data-filename="agnes_${Date.now()}_${i}.${ext}">⬇</button>
+          <button class="btn-share" data-url="${r.blobUrl || r.url}" data-filename="agnes_${Date.now()}_${i}.${ext}" data-mime="${mime}">↗</button>
         </div>`;
       card.querySelector('.btn-download').onclick = function(e) { e.stopPropagation(); downloadResult(this.dataset.url, this.dataset.filename); };
       card.querySelector('.btn-share').onclick = function(e) { e.stopPropagation(); shareResult(this.dataset.url, this.dataset.filename, this.dataset.mime); };
@@ -1884,6 +2058,8 @@ function showErrorDetail() {
     hintText = '💰 账户余额不足，请前往对应供应商网站充值';
   } else if (err.code === 403) {
     hintText = '💡 无权限访问，请检查 API Key 是否有对应模型的权限';
+  } else if (msg.includes('workers ai') || msg.includes('cloudflare') || msg.includes('免费 neurons') || msg.includes('daily free allocation')) {
+    hintText = '☁️ Cloudflare Workers AI 错误：请检查接口地址、APP_KEY，以及 Workers AI 绑定是否已部署；免费额度每天 UTC 00:00（北京时间 08:00）重置';
   } else if (err.code === 429 || msg.includes('rate')) {
     hintText = '💡 请求过于频繁，请稍等片刻后重试';
   } else if (err.code === 500 || msg.includes('server')) {
@@ -1896,6 +2072,11 @@ function showErrorDetail() {
     hintText = '🛡️ 内容被安全策略拦截。请修改提示词，或更换输入图片后重试。图生图时输入图片本身也会经过内容审查';
   } else if (msg.includes('replicate') || msg.includes('Replicate')) {
     hintText = '💡 Replicate API 错误，请检查 API Key 是否有效，或访问 replicate.com 查看账户状态';
+  } else if (msg.includes('not found') && String(state.videoProvider || '').startsWith('atlascloud')) {
+    const vCfg = ATLAS_VIDEO_MODELS[state.videoProvider];
+    hintText = vCfg && vCfg.requiresAuth
+      ? '🔒 该模型需要 Atlas Cloud 单独授权（成人内容模型，公开 API 目录中不提供）。请发邮件到 support@atlascloud.ai 申请开通；或先改选 Wan 3.0（$0.04/次）或 Wan 2.6 Flash（$0.018/次）'
+      : '💡 模型不存在或当前账号不可用，请访问 atlascloud.ai/models 核对模型名称';
   } else if (msg.includes('atlas') || msg.includes('Atlas') || msg.includes('atlascloud')) {
     hintText = '💡 Atlas Cloud API 错误，请检查 API Key 是否有效，或访问 atlascloud.ai 查看账户状态';
   } else {
@@ -1936,7 +2117,7 @@ async function fetchDownloadResponse(url) {
   let lastErr = null;
   for (const proxyBase of proxies) {
     try {
-      const resp = await fetch(proxyBase + encodeURIComponent(url));
+      const resp = await fetch(buildProxyUrl(proxyBase, url));
       if (resp.ok) return resp;
       lastErr = new Error(`HTTP ${resp.status}`);
     } catch(e) { lastErr = e; }
@@ -1946,10 +2127,10 @@ async function fetchDownloadResponse(url) {
 
 async function fetchResultBlob(url, onProgress) {
   if (url.startsWith('blob:')) {
+    // 不要 revoke：同一个 blob URL 仍被结果网格/灯箱/历史复用，
+    // revoke 后预览和再次下载都会失败。页面关闭时浏览器会自动回收。
     const resp = await fetch(url);
-    const blob = await resp.blob();
-    URL.revokeObjectURL(url);
-    return blob;
+    return await resp.blob();
   }
   const resp = await fetchDownloadResponse(url);
   const total = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
@@ -2203,14 +2384,9 @@ function updateProviderIndicator() {
   const el = $('#providerIndicator');
   const isVideo = state.mode === 'text-to-video' || state.mode === 'image-to-video';
   if (isVideo) {
-    if (state.videoProvider === 'atlascloud-seedance2') {
-      el.textContent = '🎬 当前: Seedance 2.0 (Atlas Cloud)';
-      el.style.display = 'block';
-    } else if (state.videoProvider === 'atlascloud-seedance15spicy') {
-      el.textContent = '🎬 当前: Seedance 1.5 Pro Spicy (Atlas Cloud)';
-      el.style.display = 'block';
-    } else if (state.videoProvider === 'atlascloud-wan27spicy') {
-      el.textContent = '🎬 当前: Wan 2.7 Spicy (Atlas Cloud · I2V)';
+    const vCfg = ATLAS_VIDEO_MODELS[state.videoProvider];
+    if (vCfg) {
+      el.textContent = '🎬 当前: ' + vCfg.name + ' (Atlas Cloud' + (vCfg.requiresAuth ? ' · ⚠️ 需授权' : '') + ')';
       el.style.display = 'block';
     } else {
       el.style.display = 'none';
@@ -2224,6 +2400,11 @@ function updateProviderIndicator() {
       el.style.display = 'block';
     } else if (state.imageProvider === 'replicate') {
       el.textContent = '🖼️ 当前: FLUX.1 Pro (Replicate)';
+      el.style.display = 'block';
+    } else if (state.imageProvider === 'workersai') {
+      const m = state.settings.workersAiModel || '';
+      const name = m.includes('stable-diffusion-xl') ? 'SDXL Base 1.0' : 'FLUX.1 Schnell';
+      el.textContent = '☁️ 当前: Cloudflare Workers AI (' + name + ')';
       el.style.display = 'block';
     } else {
       el.style.display = 'none';
@@ -2241,6 +2422,14 @@ function renderSettingsForm() {
   $('#defaultVideoResolution').value = state.settings.videoResolution;
   $('#defaultVideoDuration').value = String(state.settings.videoDuration);
   $('#imageProvider').value = state.imageProvider;
+  $('#workersAiUrl').value = state.workersAiUrl;
+  $('#workersAiKeyInput').value = state.workersAiKey ? '••••••••••••••••••••' : '';
+  $('#workersAiKeyInput').type = 'password';
+  $('#toggleWorkersAiKeyVis').textContent = '👁';
+  $('#workersAiModel').value = state.settings.workersAiModel;
+  $('#workersAiSteps').value = String(state.settings.workersAiSteps);
+  $('#workersAiSteps').max = state.settings.workersAiModel.includes('stable-diffusion-xl') ? '20' : '8';
+  $('#workersAiGroup').style.display = state.imageProvider === 'workersai' ? 'block' : 'none';
   $('#replicateKeyInput').value = state.replicateKey ? '••••••••••••••••••••' : '';
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
   $('#videoProvider').value = state.videoProvider;
@@ -2332,8 +2521,49 @@ $('#defaultVideoDuration').onchange = () => { state.settings.videoDuration = par
 
 $('#imageProvider').onchange = () => {
   state.imageProvider = $('#imageProvider').value;
+  $('#workersAiGroup').style.display = state.imageProvider === 'workersai' ? 'block' : 'none';
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
   $('#atlasCloudKeyGroup').style.display = ((state.imageProvider && state.imageProvider.startsWith('atlascloud')) || (state.videoProvider && state.videoProvider.startsWith('atlascloud'))) ? 'block' : 'none';
+  saveState(state);
+};
+$('#workersAiUrl').onchange = () => {
+  state.workersAiUrl = $('#workersAiUrl').value.trim();
+  saveState(state);
+};
+$('#saveWorkersAiKey').onclick = () => {
+  const val = $('#workersAiKeyInput').value.trim();
+  if (val && val !== '••••••••••••••••••••') {
+    state.workersAiKey = val;
+    saveState(state);
+    showToast('Workers AI Key 已保存', 'success');
+    $('#workersAiKeyInput').type = 'password';
+    $('#workersAiKeyInput').value = '••••••••••••••••••••';
+    $('#toggleWorkersAiKeyVis').textContent = '👁';
+  }
+};
+$('#toggleWorkersAiKeyVis').onclick = () => {
+  const inp = $('#workersAiKeyInput');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    if (inp.value === '••••••••••••••••••••') inp.value = state.workersAiKey;
+    $('#toggleWorkersAiKeyVis').textContent = '🙈';
+  } else {
+    inp.type = 'password';
+    inp.value = state.workersAiKey ? '••••••••••••••••••••' : '';
+    $('#toggleWorkersAiKeyVis').textContent = '👁';
+  }
+};
+$('#workersAiModel').onchange = () => {
+  state.settings.workersAiModel = $('#workersAiModel').value;
+  const isSdxl = state.settings.workersAiModel.includes('stable-diffusion-xl');
+  state.settings.workersAiSteps = isSdxl ? 20 : 4;
+  $('#workersAiSteps').value = String(state.settings.workersAiSteps);
+  $('#workersAiSteps').max = isSdxl ? '20' : '8';
+  saveState(state);
+  updateProviderIndicator();
+};
+$('#workersAiSteps').onchange = () => {
+  state.settings.workersAiSteps = parseInt($('#workersAiSteps').value, 10) || 4;
   saveState(state);
 };
 $('#replicateKeyInput').onchange = () => {
@@ -2459,7 +2689,8 @@ $('#clearAll').onclick = () => {
     state.settings = {
       imageSize: '1K', imageRatio: '1:1', imageQuality: 'standard', imageStyle: '', imageCount: 1,
       videoResolution: '720P', videoRatio: '16:9', videoDuration: 5,
-      imageModel: 'agnes-image-2.5-flash', videoModel: 'agnes-video-2.5-flash'
+      imageModel: 'agnes-image-2.5-flash', videoModel: 'agnes-video-2.5-flash',
+      workersAiModel: '@cf/black-forest-labs/flux-1-schnell', workersAiSteps: 4
     };
     state.proxyMode = 'auto';
     state.customProxyUrl = '';
@@ -2467,6 +2698,8 @@ $('#clearAll').onclick = () => {
     state.videoProvider = 'agnes';
     state.replicateKey = '';
     state.atlasCloudKey = '';
+    state.workersAiUrl = 'https://agnes-proxy.qinxiang2.workers.dev/ai-image';
+    state.workersAiKey = '';
     renderSettingsForm();
     showToast('所有数据已清除', 'success');
   }
@@ -2499,6 +2732,9 @@ $('#btnGenerate').onclick = () => {
   // Check appropriate API key based on provider
   if (!isVideo && state.imageProvider === 'replicate' && !state.replicateKey) {
     showToast('请先在设置中输入 Replicate API Key', 'error'); return;
+  }
+  if (!isVideo && state.imageProvider === 'workersai' && !state.workersAiUrl) {
+    showToast('请先在设置中填写 Workers AI 接口地址', 'error'); return;
   }
   if (isVideo && state.videoProvider && state.videoProvider.startsWith('atlascloud-') && !state.atlasCloudKey) {
     showToast('请先在设置中输入 Atlas Cloud API Key', 'error'); return;
@@ -2592,7 +2828,7 @@ async function reuseTask(taskId) {
     showToast('正在加载图片...', 'info');
     try {
       let resp;
-      try { resp = await fetch(t.url); } catch(e) { resp = await fetch(NETLIFY_PROXY + encodeURIComponent(t.url)); }
+      try { resp = await fetch(t.url); } catch(e) { resp = await fetch(buildProxyUrl(NETLIFY_PROXY, t.url)); }
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const blob = await resp.blob();
       const dataUri = await new Promise((resolve, reject) => {
