@@ -614,8 +614,6 @@ img,video{max-width:100%;display:block}
         <option value="atlascloud-seedance2">Seedance 2.0（Atlas Cloud · 全球可用 · T2V+I2V）</option>
         <option value="atlascloud-wan3">Wan 3.0（Atlas Cloud · $0.04/次 · 质量最强 · 最长 30s）</option>
         <option value="atlascloud-wan26flash">Wan 2.6 Flash（Atlas Cloud · $0.018/次 · 最便宜）</option>
-        <option value="atlascloud-seedance15spicy">Seedance 1.5 Pro Spicy（⚠️ 需 Atlas 授权 · 仅 I2V）</option>
-        <option value="atlascloud-wan27spicy">Wan 2.7 Spicy（⚠️ 需 Atlas 授权 · 仅 I2V）</option>
       </select>
     </div>
     <div class="form-group" id="atlasCloudKeyGroup" style="display:none">
@@ -832,6 +830,12 @@ const state = {
 // 迁移: 旧版视频模型升级为 agnes-video-2.5-flash（localStorage 旧值会覆盖上方新默认值）
 if (state.settings.videoModel === 'agnes-video-v2.0') {
   state.settings.videoModel = 'agnes-video-2.5-flash';
+}
+
+// 迁移: Atlas Cloud 已停止提供 spicy(NSFW) 模型（官方 2026-10 邮件确认，公开目录亦查无），
+// localStorage 旧值会自动切到可用的 Wan 3.0，避免用户看到空白选择框或撞 400 not found。
+if (state.videoProvider === 'atlascloud-seedance15spicy' || state.videoProvider === 'atlascloud-wan27spicy') {
+  state.videoProvider = 'atlascloud-wan3';
 }
 
 const listeners = {};
@@ -2073,10 +2077,7 @@ function showErrorDetail() {
   } else if (msg.includes('replicate') || msg.includes('Replicate')) {
     hintText = '💡 Replicate API 错误，请检查 API Key 是否有效，或访问 replicate.com 查看账户状态';
   } else if (msg.includes('not found') && String(state.videoProvider || '').startsWith('atlascloud')) {
-    const vCfg = ATLAS_VIDEO_MODELS[state.videoProvider];
-    hintText = vCfg && vCfg.requiresAuth
-      ? '🔒 该模型需要 Atlas Cloud 单独授权（成人内容模型，公开 API 目录中不提供）。请发邮件到 support@atlascloud.ai 申请开通；或先改选 Wan 3.0（$0.04/次）或 Wan 2.6 Flash（$0.018/次）'
-      : '💡 模型不存在或当前账号不可用，请访问 atlascloud.ai/models 核对模型名称';
+    hintText = '💡 模型不存在或当前账号不可用。Atlas Cloud 已不再提供 NSFW 模型（官方确认，公开目录查无 spicy 系列），如需无审查视频请改用本地 ComfyUI + Wan 2.2 或第三方平台';
   } else if (msg.includes('atlas') || msg.includes('Atlas') || msg.includes('atlascloud')) {
     hintText = '💡 Atlas Cloud API 错误，请检查 API Key 是否有效，或访问 atlascloud.ai 查看账户状态';
   } else {
