@@ -1,5 +1,5 @@
 // Agnes AI Studio - Service Worker
-const CACHE_NAME = 'agnes-studio-v34';
+const CACHE_NAME = 'agnes-studio-v35';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -41,6 +41,31 @@ self.addEventListener('fetch', (event) => {
 
   // Network-only for CORS proxy
   if (url.pathname.includes('proxy')) {
+    return;
+  }
+
+  // Network-first for navigation / HTML: app updates take effect immediately,
+  // without needing to bump CACHE_NAME on every content change.
+  const isNavigation = event.request.mode === 'navigate' ||
+    url.pathname === '/' ||
+    url.pathname.endsWith('/') ||
+    url.pathname.endsWith('/index.html');
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request).then((response) => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() =>
+        caches.match(event.request).then((cached) => cached || new Response(
+          '<html><body style="background:#0f0f1a;color:#f1f5f9;display:flex;align-items:center;justify-content:center;font-family:sans-serif;height:100vh;margin:0"><div style="text-align:center"><h1>📡</h1><p>请连接网络后使用</p></div></body></html>',
+          { headers: { 'Content-Type': 'text/html' } }
+        ))
+      )
+    );
     return;
   }
 
