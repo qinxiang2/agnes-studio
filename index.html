@@ -153,7 +153,7 @@ img,video{max-width:100%;display:block}
 .settings-toggle .arrow{transition:transform 0.3s}
 .settings-toggle.open .arrow{transform:rotate(180deg)}
 .settings-panel{max-height:0;overflow:hidden;transition:max-height 0.35s ease}
-.settings-panel.open{max-height:600px}
+.settings-panel.open{max-height:1400px}
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-bottom:14px}
 
 /* ═══════════════════════════════════════════ Buttons ═══════════════════════════════════════════ */
@@ -572,6 +572,7 @@ img,video{max-width:100%;display:block}
         <option value="atlascloud-seedream">Seedream 5.0 Pro（Atlas Cloud · 直连 · 无审查 · 最强写实）</option>
         <option value="atlascloud-flux2">Flux 2 Pro（Atlas Cloud · 直连 · 无审查）</option>
         <option value="replicate">FLUX.1 Pro（Replicate · 需代理）</option>
+        <option value="civitai">Civitai（NSFW 无审查 · Buzz 计费 · 需代理）</option>
         <option value="workersai">Cloudflare Workers AI（免费额度）</option>
       </select>
     </div>
@@ -627,6 +628,90 @@ img,video{max-width:100%;display:block}
         <button class="btn-secondary" id="testAtlasCloudKey">测试连接</button>
       </div>
       <div class="test-result" id="atlasCloudTestResult"></div>
+    </div>
+  </div>
+
+  <!-- ═══ 🎨 Civitai 独立配置（折叠面板，点击展开） ═══ -->
+  <div class="settings-section">
+    <button class="settings-toggle" id="civitaiToggle">
+      <span>🎨 Civitai 配置 <span style="font-size:11px;color:var(--text-muted);font-weight:400">NSFW 无审查 · 需代理</span></span>
+      <span class="arrow">▾</span>
+    </button>
+    <div class="settings-panel" id="civitaiPanel">
+      <!-- Token -->
+      <label class="form-label">API Token</label>
+      <div class="api-key-wrap">
+        <input type="password" class="form-input" id="civitaiTokenInput" placeholder="32 位 token（civitai.com/user/account → API Keys）">
+        <button class="btn-secondary" id="toggleCivitaiTokenVis" style="flex-shrink:0">👁</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-secondary" id="saveCivitaiToken">保存</button>
+        <button class="btn-secondary" id="testCivitaiToken">测试连接</button>
+      </div>
+      <div class="test-result" id="civitaiTestResult"></div>
+
+      <!-- NSFW 开关 -->
+      <div class="toggle-row" style="margin-top:6px">
+        <div>
+          <div class="toggle-label">NSFW 内容</div>
+          <div class="toggle-desc">开启 → allowMatureContent=true（需会员 Blue Buzz 或 Yellow Buzz）</div>
+        </div>
+        <button class="toggle-switch on" id="civitaiNsfwToggle"></button>
+      </div>
+
+      <!-- Checkpoint -->
+      <label class="form-label" style="margin-top:10px">Checkpoint 模型</label>
+      <select class="form-select" id="civitaiCheckpoint">
+        <option value="urn:air:sdxl:checkpoint:civitai:897413@2867688">Big Love（写实 NSFW · 21万下载/月）</option>
+        <option value="urn:air:sdxl:checkpoint:civitai:138977@1461059">0x7 - Realistic Freedom</option>
+        <option value="urn:air:sdxl:checkpoint:civitai:1815169@3441126">Reality BoundXL</option>
+        <option value="urn:air:sdxl:checkpoint:civitai:2242173@2712294">DarkBeast 6X 黑兽</option>
+        <option value="urn:air:sdxl:checkpoint:civitai:123313@2653358">Art Universe</option>
+        <option value="__custom__">✏️ 自定义 AIR URN…</option>
+      </select>
+      <input type="text" class="form-input" id="civitaiCustomCheckpoint" placeholder="urn:air:sdxl:checkpoint:civitai:模型ID@版本ID" style="display:none;margin-top:6px">
+
+      <!-- LoRA -->
+      <label class="form-label" style="margin-top:10px">LoRA（每行一个：AIR:强度）</label>
+      <textarea class="form-textarea" id="civitaiLoras" style="min-height:64px;font-size:12px" placeholder="urn:air:sdxl:lora:civitai:2327873@2911936:0.75"></textarea>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span>预设:</span>
+        <button class="btn-small" id="civitaiAddAsianLora">+ 亚洲 Soap Opera</button>
+        <button class="btn-small" id="civitaiClearLoras">清空</button>
+      </div>
+
+      <!-- Negative Prompt -->
+      <label class="form-label" style="margin-top:10px">负面提示词（Negative Prompt）</label>
+      <textarea class="form-textarea" id="civitaiNegative" style="min-height:52px;font-size:12px" placeholder="lowres, bad anatomy, bad hands, worst quality..."></textarea>
+
+      <!-- 尺寸 / 步数 / CFG -->
+      <div class="settings-grid" style="margin-top:10px">
+        <div>
+          <label class="form-label">尺寸</label>
+          <select class="form-select" id="civitaiSize">
+            <option value="832x1216">832×1216 竖版</option>
+            <option value="1216x832">1216×832 横版</option>
+            <option value="1024x1024">1024×1024 方形</option>
+            <option value="896x1152">896×1152</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">步数</label>
+          <input type="number" class="form-input" id="civitaiSteps" min="10" max="40" value="26">
+        </div>
+        <div>
+          <label class="form-label">CFG</label>
+          <input type="number" class="form-input" id="civitaiCfg" min="1" max="15" step="0.5" value="6">
+        </div>
+        <div>
+          <label class="form-label">张数</label>
+          <input type="number" class="form-input" id="civitaiQuantity" min="1" max="4" value="1">
+        </div>
+      </div>
+
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+        💡 通过 Cloudflare Worker 代理调用（国内需代理才能访问）。约 7~17 Buzz/张，会员 Blue Buzz 可用于 NSFW。
+      </div>
     </div>
   </div>
 
@@ -773,7 +858,7 @@ function loadState() {
 }
 
 function saveState(s) {
-  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl, imageProvider: s.imageProvider, videoProvider: s.videoProvider, replicateKey: s.replicateKey, atlasCloudKey: s.atlasCloudKey, workersAiUrl: s.workersAiUrl, workersAiKey: s.workersAiKey };
+  const toSave = { apiKey: s.apiKey, settings: s.settings, proxyMode: s.proxyMode, customProxyUrl: s.customProxyUrl, imageProvider: s.imageProvider, videoProvider: s.videoProvider, replicateKey: s.replicateKey, atlasCloudKey: s.atlasCloudKey, workersAiUrl: s.workersAiUrl, workersAiKey: s.workersAiKey, civitai: s.civitai };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 
@@ -819,6 +904,18 @@ const state = {
   atlasCloudKey: saved.atlasCloudKey || '',
   workersAiUrl: saved.workersAiUrl || 'https://agnes-proxy.qinxiang2.workers.dev/ai-image',
   workersAiKey: saved.workersAiKey || '',
+  civitai: Object.assign({
+    token: '',
+    nsfw: true,
+    checkpoint: 'urn:air:sdxl:checkpoint:civitai:897413@2867688',
+    customCheckpoint: '',
+    loras: 'urn:air:sdxl:lora:civitai:2327873@2911936:0.75',
+    negative: 'child, minor, loli, lowres, bad anatomy, bad hands, extra limbs, deformed, blurry, worst quality, watermark, text, signature, cartoon, anime, 3d render',
+    size: '832x1216',
+    steps: 26,
+    cfg: 6,
+    quantity: 1,
+  }, saved.civitai || {}),
   isGenerating: false,
   results: [],
   lastError: null,          // {message, code, type, timestamp}
@@ -1312,6 +1409,137 @@ async function generateReplicateImage() {
   }
 }
 
+// ─── Civitai Orchestration 生图（NSFW 无审查）────────────
+const CIVITAI_API = 'https://orchestration.civitai.com';
+
+// LoRA 文本解析：每行 "urn:air:sdxl:lora:...:强度"，AIR 自带冒号，故按末尾 :数字 切分
+function parseCivitaiLoras(text) {
+  const out = {};
+  String(text || '').split('\n').map(x => x.trim()).filter(Boolean).forEach(line => {
+    const m = line.match(/^(urn:\S+?):([\d.]+)$/);
+    if (m) out[m[1]] = parseFloat(m[2]);
+    else if (line.indexOf('urn:') === 0) out[line] = 0.8;
+  });
+  return out;
+}
+
+function civitaiUrl(path) {
+  const proxy = state.customProxyUrl || AGNES_PROXY;
+  return buildProxyUrl(proxy, CIVITAI_API + path);
+}
+
+async function generateCivitaiImage() {
+  const cv = state.civitai || {};
+  if (!cv.token) { showToast('请先在设置 → Civitai 配置中填入 API Token', 'error'); return; }
+  if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
+
+  state.isGenerating = true;
+  renderGenerateBtn();
+  hideResults();
+
+  // SDXL 提示词用英文效果最佳：中文先翻译
+  let prompt = state.prompt;
+  if (typeof hasChinese === 'function' && hasChinese(prompt)) {
+    showToast('🔤 正在翻译为英文...', 'info');
+    try { prompt = await translatePromptForFlux(prompt); } catch(e) {}
+  }
+
+  const sizeParts = String(cv.size || '832x1216').split('x');
+  const w = parseInt(sizeParts[0], 10) || 832;
+  const h = parseInt(sizeParts[1], 10) || 1216;
+  const ckpt = String(cv.checkpoint === '__custom__' ? (cv.customCheckpoint || '') : (cv.checkpoint || '')).trim();
+  if (!ckpt) {
+    state.isGenerating = false; renderGenerateBtn();
+    showToast('请选择或填写 Checkpoint AIR URN', 'error'); return;
+  }
+  const loras = parseCivitaiLoras(cv.loras);
+
+  const input = {
+    engine: 'sdcpp',
+    ecosystem: 'sdxl',
+    operation: 'createImage',
+    checkpointModel: ckpt,
+    model: ckpt,
+    prompt: prompt,
+    negativePrompt: cv.negative || '',
+    width: w,
+    height: h,
+    steps: parseInt(cv.steps, 10) || 26,
+    cfgScale: parseFloat(cv.cfg) || 6,
+    quantity: Math.min(4, Math.max(1, parseInt(cv.quantity, 10) || 1)),
+  };
+  if (Object.keys(loras).length) input.loras = loras;
+
+  const body = {
+    allowMatureContent: !!cv.nsfw,
+    currencies: cv.nsfw ? ['blue'] : ['blue', 'green'],
+    steps: [{ $type: 'imageGen', input }],
+  };
+  const headers = { 'Authorization': 'Bearer ' + cv.token, 'Content-Type': 'application/json' };
+
+  try {
+    // 1) 异步提交（wait=0，避免长连接被中间层中断）
+    const submitRes = await fetch(civitaiUrl('/v2/consumer/workflows?wait=0'), {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const submitText = await submitRes.text();
+    let submitJson = {};
+    try { submitJson = JSON.parse(submitText); } catch(e) {}
+    if (!submitRes.ok) {
+      const msg = submitJson.message || submitJson.error || submitText.slice(0, 300) || ('HTTP ' + submitRes.status);
+      throw { code: submitRes.status, message: msg };
+    }
+    const wfId = submitJson.id;
+    if (!wfId) throw new Error('Civitai 未返回任务 ID：' + submitText.slice(0, 200));
+    const cost = submitJson.cost && submitJson.cost.total;
+    showToast('🎨 已提交' + (cost != null ? `（${cost} Buzz）` : '') + '，等待出图…', 'info');
+
+    // 2) 轮询任务状态
+    let done = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 4000));
+      let p = null;
+      try {
+        const pollRes = await fetch(civitaiUrl('/v2/consumer/workflows/' + encodeURIComponent(wfId)), { headers });
+        if (!pollRes.ok) continue;
+        p = await pollRes.json();
+      } catch(e) { continue; }
+      const st = (p.steps || [])[0] || {};
+      const imgs = (st.output && st.output.images) || [];
+      const errors = (st.output && st.output.errors) || [];
+      if (errors.length) {
+        throw new Error('Civitai 生成错误：' + (errors[0].message || JSON.stringify(errors[0])));
+      }
+      if (p.status === 'failed' || st.status === 'failed') throw new Error('Civitai 生成失败（任务 ' + wfId + '）');
+      if (imgs.length && imgs[0].available) { done = imgs; break; }
+    }
+    if (!done) throw new Error('Civitai 超时：任务仍在生成（' + wfId + '），可稍后重试');
+
+    state.results = done.map((im, i) => ({
+      type: 'image',
+      url: im.url,
+      blobUrl: im.url,
+      blob: null,
+      index: i,
+      prompt: prompt,
+      originalPrompt: prompt !== state.prompt ? state.prompt : null,
+      timestamp: Date.now(),
+    }));
+    renderResults();
+    state.lastError = null;
+    hideErrorDetail();
+    addToHistory(state.results);
+    showToast('✅ Civitai 出图成功', 'info');
+  } catch(e) {
+    state.lastError = { message: e.message || String(e), code: e.code || '', type: 'image', timestamp: Date.now() };
+    showErrorDetail();
+    showToast('Civitai 生成失败', 'error');
+  } finally {
+    state.isGenerating = false;
+    renderGenerateBtn();
+  }
+}
+
 // ─── Cloudflare Workers AI 生图 ────────────────────────────
 async function generateWorkersAIImage() {
   if (!state.prompt.trim()) { showToast('请输入描述内容', 'error'); return; }
@@ -1432,6 +1660,10 @@ async function generateImage() {
   if (state.imageProvider === 'workersai') {
     if (!state.workersAiUrl) { showToast('请先在设置中填写 Workers AI 接口地址', 'error'); return; }
     return generateWorkersAIImage();
+  }
+  if (state.imageProvider === 'civitai') {
+    if (!state.civitai || !state.civitai.token) { showToast('请先在设置 → Civitai 配置中填入 API Token', 'error'); return; }
+    return generateCivitaiImage();
   }
 
   state.isGenerating = true;
@@ -2407,6 +2639,15 @@ function updateProviderIndicator() {
       const name = m.includes('stable-diffusion-xl') ? 'SDXL Base 1.0' : 'FLUX.1 Schnell';
       el.textContent = '☁️ 当前: Cloudflare Workers AI (' + name + ')';
       el.style.display = 'block';
+    } else if (state.imageProvider === 'civitai') {
+      const cv = state.civitai || {};
+      const ckName = (cv.checkpoint === '__custom__')
+        ? '自定义 AIR'
+        : (($('#civitaiCheckpoint') && $('#civitaiCheckpoint').selectedOptions[0])
+            ? $('#civitaiCheckpoint').selectedOptions[0].textContent.replace(/（.*$/, '')
+            : 'SDXL');
+      el.textContent = '🎨 当前: Civitai · ' + ckName + (cv.nsfw ? ' · 🔞 NSFW' : ' · SFW');
+      el.style.display = 'block';
     } else {
       el.style.display = 'none';
     }
@@ -2436,6 +2677,25 @@ function renderSettingsForm() {
   $('#videoProvider').value = state.videoProvider;
   $('#atlasCloudKeyInput').value = state.atlasCloudKey ? '••••••••••••••••••••' : '';
   $('#atlasCloudKeyGroup').style.display = ((state.videoProvider && state.videoProvider.startsWith('atlascloud')) || state.imageProvider.startsWith('atlascloud-')) ? 'block' : 'none';
+
+  // ── Civitai 配置回填 ──
+  const cv = state.civitai || {};
+  if ($('#civitaiTokenInput')) {
+    $('#civitaiTokenInput').value = cv.token ? '••••••••••••••••••••' : '';
+    $('#civitaiTokenInput').type = 'password';
+    $('#toggleCivitaiTokenVis').textContent = '👁';
+    $('#civitaiNsfwToggle').classList.toggle('on', !!cv.nsfw);
+    $('#civitaiCheckpoint').value = cv.checkpoint || 'urn:air:sdxl:checkpoint:civitai:897413@2867688';
+    $('#civitaiCustomCheckpoint').value = cv.customCheckpoint || '';
+    $('#civitaiCustomCheckpoint').style.display = (cv.checkpoint === '__custom__') ? 'block' : 'none';
+    $('#civitaiLoras').value = cv.loras || '';
+    $('#civitaiNegative').value = cv.negative || '';
+    $('#civitaiSize').value = cv.size || '832x1216';
+    $('#civitaiSteps').value = String(cv.steps || 26);
+    $('#civitaiCfg').value = String(cv.cfg || 6);
+    $('#civitaiQuantity').value = String(cv.quantity || 1);
+  }
+
   updateStatusDot();
 }
 
@@ -2525,8 +2785,123 @@ $('#imageProvider').onchange = () => {
   $('#workersAiGroup').style.display = state.imageProvider === 'workersai' ? 'block' : 'none';
   $('#replicateKeyGroup').style.display = state.imageProvider === 'replicate' ? 'block' : 'none';
   $('#atlasCloudKeyGroup').style.display = ((state.imageProvider && state.imageProvider.startsWith('atlascloud')) || (state.videoProvider && state.videoProvider.startsWith('atlascloud'))) ? 'block' : 'none';
-  saveState(state);
+  // 选中 Civitai 时自动展开其配置面板，方便用户就地配置
+  if (state.imageProvider === 'civitai' && $('#civitaiPanel')) {
+    $('#civitaiPanel').classList.add('open');
+    $('#civitaiToggle').classList.add('open');
+    if (!state.civitai || !state.civitai.token) {
+      showToast('请先在下方 Civitai 配置中填入 API Token', 'info');
+    }
+  }
+  saveState(state); updateProviderIndicator(); updateStatusDot();
 };
+// ═══ Civitai 配置面板事件 ═══
+if ($('#civitaiToggle')) {
+  const cvSave = () => saveState(state);
+  const MASK = '••••••••••••••••••••';
+
+  $('#civitaiToggle').onclick = () => {
+    $('#civitaiPanel').classList.toggle('open');
+    $('#civitaiToggle').classList.toggle('open');
+  };
+
+  $('#toggleCivitaiTokenVis').onclick = () => {
+    const inp = $('#civitaiTokenInput');
+    if (inp.type === 'password') {
+      inp.type = 'text';
+      if (inp.value === MASK) inp.value = state.civitai.token || '';
+      $('#toggleCivitaiTokenVis').textContent = '🙈';
+    } else {
+      inp.type = 'password';
+      inp.value = state.civitai.token ? MASK : '';
+      $('#toggleCivitaiTokenVis').textContent = '👁';
+    }
+  };
+
+  $('#civitaiTokenInput').onchange = () => {
+    const v = $('#civitaiTokenInput').value.trim();
+    if (v && v !== MASK) { state.civitai.token = v; cvSave(); }
+  };
+
+  $('#saveCivitaiToken').onclick = () => {
+    const v = $('#civitaiTokenInput').value.trim();
+    if (!v || v === MASK) {
+      showToast(state.civitai.token ? 'Token 已保存' : '请输入 Civitai API Token', state.civitai.token ? 'info' : 'error');
+      return;
+    }
+    state.civitai.token = v;
+    cvSave();
+    $('#civitaiTokenInput').type = 'password';
+    $('#civitaiTokenInput').value = MASK;
+    $('#toggleCivitaiTokenVis').textContent = '👁';
+    showToast('✅ Civitai Token 已保存', 'info');
+  };
+
+  $('#testCivitaiToken').onclick = async () => {
+    const el = $('#civitaiTestResult');
+    const v = $('#civitaiTokenInput').value.trim();
+    const tk = (v && v !== MASK) ? v : state.civitai.token;
+    if (!tk) { el.textContent = '❌ 请先填入 API Token'; el.className = 'test-result error'; return; }
+    el.textContent = '⏳ 测试中…'; el.className = 'test-result';
+    try {
+      const res = await fetch(civitaiUrl('/v2/services'), { headers: { Authorization: 'Bearer ' + tk } });
+      if (res.ok) {
+        let n = '?';
+        try { const a = await res.json(); if (Array.isArray(a)) n = a.length; } catch(e) {}
+        el.textContent = '✅ 连接成功 · 可用服务 ' + n + ' 个';
+        el.className = 'test-result success';
+      } else {
+        const t = await res.text();
+        el.textContent = '❌ HTTP ' + res.status + ' · ' + t.slice(0, 160);
+        el.className = 'test-result error';
+      }
+    } catch(e) {
+      el.textContent = '❌ 网络失败：' + (e.message || e) + '（国内需开启代理）';
+      el.className = 'test-result error';
+    }
+  };
+
+  $('#civitaiNsfwToggle').onclick = () => {
+    state.civitai.nsfw = !state.civitai.nsfw;
+    $('#civitaiNsfwToggle').classList.toggle('on', state.civitai.nsfw);
+    cvSave(); updateProviderIndicator();
+  };
+
+  $('#civitaiCheckpoint').onchange = () => {
+    state.civitai.checkpoint = $('#civitaiCheckpoint').value;
+    $('#civitaiCustomCheckpoint').style.display = (state.civitai.checkpoint === '__custom__') ? 'block' : 'none';
+    cvSave(); updateProviderIndicator();
+  };
+
+  $('#civitaiCustomCheckpoint').onchange = () => {
+    state.civitai.customCheckpoint = $('#civitaiCustomCheckpoint').value.trim();
+    cvSave(); updateProviderIndicator();
+  };
+
+  $('#civitaiLoras').onchange = () => { state.civitai.loras = $('#civitaiLoras').value; cvSave(); };
+  $('#civitaiNegative').onchange = () => { state.civitai.negative = $('#civitaiNegative').value; cvSave(); };
+  $('#civitaiSize').onchange = () => { state.civitai.size = $('#civitaiSize').value; cvSave(); };
+  $('#civitaiSteps').onchange = () => { state.civitai.steps = parseInt($('#civitaiSteps').value, 10) || 26; cvSave(); };
+  $('#civitaiCfg').onchange = () => { state.civitai.cfg = parseFloat($('#civitaiCfg').value) || 6; cvSave(); };
+  $('#civitaiQuantity').onchange = () => { state.civitai.quantity = parseInt($('#civitaiQuantity').value, 10) || 1; cvSave(); };
+
+  $('#civitaiAddAsianLora').onclick = () => {
+    const air = 'urn:air:sdxl:lora:civitai:2327873@2911936';
+    const cur = $('#civitaiLoras').value.trim();
+    if (cur.indexOf(air) >= 0) { showToast('亚洲 Soap Opera 已在列表中', 'info'); return; }
+    $('#civitaiLoras').value = (cur ? cur + '\n' : '') + air + ':0.75';
+    state.civitai.loras = $('#civitaiLoras').value;
+    cvSave();
+    showToast('已添加亚洲 Soap Opera LoRA (0.75)', 'info');
+  };
+
+  $('#civitaiClearLoras').onclick = () => {
+    $('#civitaiLoras').value = '';
+    state.civitai.loras = '';
+    cvSave();
+  };
+}
+
 $('#workersAiUrl').onchange = () => {
   state.workersAiUrl = $('#workersAiUrl').value.trim();
   saveState(state);
