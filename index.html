@@ -654,7 +654,7 @@ img,video{max-width:100%;display:block}
       <div class="toggle-row" style="margin-top:6px">
         <div>
           <div class="toggle-label">NSFW 内容</div>
-          <div class="toggle-desc">开启 → allowMatureContent=true（需会员 Blue Buzz 或 Yellow Buzz）</div>
+          <div class="toggle-desc">开启 → allowMatureContent=true。NSFW 只能用 <b>Blue Buzz</b>（会员免费额度，不可购买）；<b>Green Buzz 仅支持 SFW</b></div>
         </div>
         <button class="toggle-switch on" id="civitaiNsfwToggle"></button>
       </div>
@@ -1472,7 +1472,12 @@ async function generateCivitaiImage() {
 
   const body = {
     allowMatureContent: !!cv.nsfw,
-    currencies: cv.nsfw ? ['blue'] : ['blue', 'green'],
+    // Civitai 货币规则（官方 2026）：
+    //   Green = 信用卡购买，仅 SFW（PG/PG-13），不能跑 NSFW
+    //   Blue  = 免费赚取，会员可跑 NSFW；不能购买
+    //   Yellow= 加密货币购买，civitai.red 全评级
+    // 故 SFW 优先用 Green（额度大），NSFW 只能用 Blue。
+    currencies: cv.nsfw ? ['blue'] : ['green', 'blue'],
     steps: [{ $type: 'imageGen', input }],
   };
   const headers = { 'Authorization': 'Bearer ' + cv.token, 'Content-Type': 'application/json' };
@@ -1487,6 +1492,15 @@ async function generateCivitaiImage() {
     try { submitJson = JSON.parse(submitText); } catch(e) {}
     if (!submitRes.ok) {
       const msg = submitJson.message || submitJson.error || submitText.slice(0, 300) || ('HTTP ' + submitRes.status);
+      // insufficientBuzz 需要分情况解释，否则用户会以为是 Bug
+      if (String(msg).includes('insufficientBuzz')) {
+        throw {
+          code: submitRes.status,
+          message: cv.nsfw
+            ? 'Blue Buzz 不足。NSFW 只能用 Blue Buzz（会员免费额度，无法购买），Green Buzz 不能用于 NSFW。\n去 civitai.com/user/buzz-dashboard 领每日 Blue Buzz，或关闭 NSFW 开关改用 Green Buzz。'
+            : 'Buzz 余额不足。去 civitai.com/user/buzz-dashboard 查看 Green / Blue 余额与每日可领额度。',
+        };
+      }
       throw { code: submitRes.status, message: msg };
     }
     const wfId = submitJson.id;
